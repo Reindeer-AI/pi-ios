@@ -1,0 +1,312 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
+<meta name="color-scheme" content="light dark">
+<!--
+  Draws an extension's pi-tui component as native-looking views (the view tree `tui.ts` describes) and sends what the
+  user does back to it: taps on list rows and settings, text, cancel, and keys for components that read the keyboard.
+-->
+<style>
+  :root {
+    --text: #000;
+    --secondary: rgba(60, 60, 67, 0.6);
+    --separator: rgba(60, 60, 67, 0.29);
+    --group: #fff;
+    --fill: rgba(118, 118, 128, 0.12);
+    --accent: #0a84ff;
+    /* The sheet's background, behind the key bar. */
+    --page: #f2f2f7;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --text: #fff;
+      --secondary: rgba(235, 235, 245, 0.6);
+      --separator: rgba(84, 84, 88, 0.6);
+      /* Rows on a sheet (an elevated surface in dark mode). */
+      --group: #2c2c2e;
+      --fill: rgba(118, 118, 128, 0.24);
+      --page: #1c1c1e;
+    }
+  }
+  html, body { margin: 0; padding: 0; background: transparent; color: var(--text); }
+  body {
+    font: -apple-system-body;
+    font-family: -apple-system, system-ui, sans-serif;
+    -webkit-text-size-adjust: 100%;
+    -webkit-tap-highlight-color: transparent;
+    padding: 12px 16px 16px;
+  }
+  body.compact { padding: 0; font-size: 15px; }
+  .stack { display: flex; flex-direction: column; gap: 8px; }
+  .stack.horizontal { flex-direction: row; }
+  .stack.horizontal > * { flex: 1; min-width: 0; }
+  .text { white-space: pre-wrap; overflow-wrap: anywhere; }
+  .markdown { white-space: normal; }
+  .markdown > :first-child { margin-top: 0; }
+  .markdown > :last-child { margin-bottom: 0; }
+  .markdown pre, .markdown code { font-family: ui-monospace, Menlo, monospace; font-size: 0.85em; }
+  .markdown pre { background: var(--fill); border-radius: 8px; padding: 8px 10px; overflow-x: auto; }
+  .markdown blockquote { margin: 0.8em 0; padding-left: 12px; border-left: 3px solid var(--separator); color: var(--secondary); }
+  .markdown a { color: var(--accent); }
+  .lines, #measure {
+    font: 12px/1.35 ui-monospace, Menlo, monospace;
+    white-space: pre;
+  }
+  .lines { overflow-x: auto; }
+  /* A component that reads keys: its terminal area. */
+  .lines.input { background: var(--fill); border-radius: 10px; padding: 8px 10px; }
+  body.compact .lines.input { padding: 6px 8px; }
+  #measure { position: absolute; visibility: hidden; }
+  .divider { height: 0.5px; background: var(--separator); margin: 2px 0; }
+  .group { background: var(--group); border-radius: 12px; overflow: hidden; }
+  body.compact .group { background: var(--fill); }
+  .row {
+    display: flex; align-items: center; gap: 10px;
+    padding: 11px 16px; min-height: 22px;
+    border-bottom: 0.5px solid var(--separator);
+    cursor: pointer;
+  }
+  .row:last-child { border-bottom: none; }
+  .row:active { background: var(--fill); }
+  .row .body { flex: 1; min-width: 0; }
+  .row .description { font-size: 13px; color: var(--secondary); margin-top: 2px; }
+  .row .value { color: var(--secondary); white-space: nowrap; }
+  .row .check { color: var(--accent); font-weight: 600; width: 16px; text-align: center; }
+  .row.selected .label { font-weight: 600; }
+  .field { display: flex; gap: 8px; align-items: flex-end; }
+  input.text-field, textarea {
+    flex: 1; min-width: 0; box-sizing: border-box;
+    font: inherit; color: inherit;
+    background: var(--group); border: 0.5px solid var(--separator); border-radius: 10px;
+    padding: 9px 12px; outline: none;
+  }
+  body.compact input.text-field, body.compact textarea { background: var(--fill); border: none; }
+  textarea { width: 100%; min-height: 160px; font-family: ui-monospace, Menlo, monospace; font-size: 14px; resize: vertical; }
+  button {
+    font: inherit; color: var(--accent); background: var(--fill); border: none; border-radius: 10px;
+    padding: 9px 14px; cursor: pointer;
+  }
+  button:active { opacity: 0.6; }
+  .editor { display: flex; flex-direction: column; gap: 8px; align-items: flex-end; }
+  .loader { display: flex; align-items: center; gap: 10px; color: var(--secondary); padding: 6px 0; }
+  .loader .message { flex: 1; }
+  .spinner {
+    width: 16px; height: 16px; border-radius: 50%;
+    border: 2px solid var(--fill); border-top-color: var(--secondary);
+    animation: spin 0.8s linear infinite;
+  }
+  @keyframes spin { to { transform: rotate(360deg); } }
+  #keys {
+    display: none; position: sticky; bottom: 0; margin-top: 12px; padding: 8px 0;
+    gap: 6px; flex-wrap: wrap; background: var(--page);
+  }
+  body.compact #keys { position: static; background: transparent; }
+  #keys.shown { display: flex; }
+  #keys button { flex: 1 0 auto; padding: 8px 10px; font-size: 15px; }
+  #keys input { flex: 1 1 100%; }
+</style>
+</head>
+<body>
+<div id="app"></div>
+<div id="keys">
+  <button data-key="up">↑</button>
+  <button data-key="down">↓</button>
+  <button data-key="left">←</button>
+  <button data-key="right">→</button>
+  <button data-key="tab">⇥</button>
+  <button data-key="enter">⏎</button>
+  <button data-key="escape">esc</button>
+  <input class="text-field" id="typing" placeholder="Type to the extension" autocapitalize="off" autocorrect="off" spellcheck="false">
+</div>
+<span id="measure">MMMMMMMMMM</span>
+<script>
+(() => {
+  const send = (event) => window.pi._event(event);
+  const app = document.getElementById("app");
+
+  // The component renders at the panel's width in columns.
+  let columns = 0;
+  const measure = () => {
+    const charWidth = document.getElementById("measure").getBoundingClientRect().width / 10;
+    const width = app.getBoundingClientRect().width - (document.body.classList.contains("compact") ? 16 : 20);
+    const next = Math.max(20, Math.floor(width / charWidth));
+    if (next !== columns) {
+      columns = next;
+      send({ type: "resize", columns });
+    }
+  };
+  addEventListener("resize", measure);
+
+  const debounced = (fn, ms) => {
+    let timer;
+    return (...args) => { clearTimeout(timer); timer = setTimeout(() => fn(...args), ms); };
+  };
+
+  // ---- views ----
+
+  const element = (tag, className, text) => {
+    const el = document.createElement(tag);
+    if (className) el.className = className;
+    if (text !== undefined) el.textContent = text;
+    return el;
+  };
+
+  const create = {
+    stack: (el) => { el.className = "stack"; },
+    html: (el) => { el.className = "text"; },
+    lines: (el) => { el.className = "lines"; },
+    spacer: () => {},
+    divider: (el) => { el.className = "divider"; },
+    select: (el) => { el.className = "group"; },
+    settings: (el) => { el.className = "group"; },
+    input: (el, node) => {
+      el.className = "field";
+      const input = element("input", "text-field");
+      input.enterKeyHint = "done";
+      input.autocapitalize = "off";
+      const change = debounced(() => send({ type: "change", id: el.__id, value: input.value }), 200);
+      input.addEventListener("input", change);
+      input.addEventListener("keydown", (e) => {
+        if (e.key === "Enter") { e.preventDefault(); send({ type: "submit", id: el.__id, value: input.value }); }
+        else if (e.key === "Escape") send({ type: "cancel", id: el.__id });
+      });
+      el.append(input);
+      el.__input = input;
+      setTimeout(() => input.focus(), 0);
+    },
+    editor: (el) => {
+      el.className = "editor";
+      const textarea = element("textarea");
+      const change = debounced(() => send({ type: "change", id: el.__id, value: textarea.value }), 300);
+      textarea.addEventListener("input", change);
+      const submit = element("button", "", "Submit");
+      submit.addEventListener("click", () => send({ type: "submit", id: el.__id, value: textarea.value }));
+      el.append(textarea, submit);
+      el.__input = textarea;
+    },
+    loader: (el) => {
+      el.className = "loader";
+      const spinner = element("div", "spinner");
+      const message = element("div", "message");
+      const cancel = element("button", "", "Cancel");
+      cancel.addEventListener("click", () => send({ type: "cancel", id: el.__id }));
+      el.append(spinner, message, cancel);
+      el.__message = message;
+      el.__cancel = cancel;
+    },
+  };
+
+  const update = {
+    stack: (el, node) => {
+      el.classList.toggle("horizontal", node.direction === "horizontal");
+      node.children.forEach((child, index) => patch(el, el.children[index], child));
+      while (el.children.length > node.children.length) el.lastElementChild.remove();
+    },
+    html: (el, node) => {
+      el.classList.toggle("markdown", /^\s*<(p|h\d|ul|ol|pre|blockquote|table|hr|div)\b/i.test(node.html));
+      if (el.__html !== node.html) { el.innerHTML = node.html; el.__html = node.html; }
+    },
+    lines: (el, node) => {
+      el.classList.toggle("input", node.input);
+      const html = node.html.join("\n");
+      if (el.__html !== html) { el.innerHTML = html; el.__html = html; }
+    },
+    spacer: (el, node) => { el.style.height = `${Math.max(0, node.lines) * 8}px`; },
+    divider: () => {},
+    select: (el, node) => {
+      const state = JSON.stringify([node.items, node.selected]);
+      if (el.__state === state) return;
+      el.__state = state;
+      el.replaceChildren(...node.items.map((item, index) => {
+        const row = element("div", index === node.selected ? "row selected" : "row");
+        const body = element("div", "body");
+        body.append(element("div", "label", item.label));
+        if (item.description) body.append(element("div", "description", item.description));
+        row.append(body, element("div", "check", index === node.selected ? "✓" : ""));
+        row.addEventListener("click", () => send({ type: "select", id: el.__id, index }));
+        return row;
+      }));
+      if (node.items.length === 0) el.append(element("div", "row", "No matches"));
+    },
+    settings: (el, node) => {
+      const state = JSON.stringify(node.items);
+      if (el.__state === state) return;
+      el.__state = state;
+      el.replaceChildren(...node.items.map((item) => {
+        const row = element("div", "row");
+        const body = element("div", "body");
+        body.append(element("div", "label", item.label));
+        if (item.description) body.append(element("div", "description", item.description));
+        const values = item.values || [];
+        row.append(body, element("div", "value", values.length > 1 ? `${item.value} ⌄` : item.value));
+        // A tap moves to the next value, as Space or Enter does in pi (shown now; the component confirms it).
+        if (values.length > 0) {
+          const value = row.lastElementChild;
+          row.addEventListener("click", () => {
+            item.value = values[(values.indexOf(item.value) + 1) % values.length];
+            value.textContent = values.length > 1 ? `${item.value} ⌄` : item.value;
+            send({ type: "setting", id: el.__id, settingId: item.id, value: item.value });
+          });
+        }
+        return row;
+      }));
+    },
+    input: (el, node) => {
+      const input = el.__input;
+      input.placeholder = node.placeholder || "";
+      if (document.activeElement !== input && input.value !== node.value) input.value = node.value;
+    },
+    editor: (el, node) => {
+      const textarea = el.__input;
+      if (document.activeElement !== textarea && textarea.value !== node.value) textarea.value = node.value;
+    },
+    loader: (el, node) => {
+      el.__message.innerHTML = node.message;
+      el.__cancel.style.display = node.cancellable ? "" : "none";
+    },
+  };
+
+  /** Updates the element showing a node in place (keeping focus and typed text), or replaces it. */
+  function patch(parent, el, node) {
+    if (el && el.__type === node.type && el.__id === node.id) {
+      update[node.type](el, node);
+      return;
+    }
+    const fresh = document.createElement("div");
+    fresh.__type = node.type;
+    fresh.__id = node.id;
+    create[node.type](fresh, node);
+    update[node.type](fresh, node);
+    if (el) parent.replaceChild(fresh, el);
+    else parent.append(fresh);
+  }
+
+  // ---- keys, for components that read the keyboard ----
+
+  const keys = document.getElementById("keys");
+  for (const button of keys.querySelectorAll("button")) {
+    button.addEventListener("click", () => send({ type: "key", key: button.dataset.key }));
+  }
+  // Typed text goes to the component as it is typed; the field stays empty.
+  const typing = document.getElementById("typing");
+  typing.addEventListener("beforeinput", (e) => {
+    e.preventDefault();
+    if (e.inputType === "deleteContentBackward") send({ type: "key", key: "backspace" });
+    else if (e.data) send({ type: "key", key: e.data });
+  });
+  typing.addEventListener("keydown", (e) => {
+    if (e.key === "Enter") { e.preventDefault(); send({ type: "key", key: "enter" }); }
+  });
+
+  window.__piRender = (content, compact) => {
+    document.body.classList.toggle("compact", !!compact);
+    patch(app, app.firstElementChild, content.root);
+    keys.classList.toggle("shown", !!content.keys);
+    measure();
+  };
+})();
+</script>
+</body>
+</html>

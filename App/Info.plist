@@ -1,0 +1,92 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<!-- iOS 26 continued processing for user-started runs (BackgroundRun.swift). -->
+	<key>BGTaskSchedulerPermittedIdentifiers</key>
+	<array>
+		<string>dev.pimobile.PiMobile.run.*</string>
+	</array>
+	<!-- The OAuth app for Settings → GitHub's device login (GitHubService). A client ID is not a secret. -->
+	<key>PIGitHubClientID</key>
+	<string>Ov23li02wDGlvGDHXiqN</string>
+	<!-- Dictation in the message box (Dictation.swift). iOS ends an app that asks without these. -->
+	<key>NSMicrophoneUsageDescription</key>
+	<string>pi listens while you dictate a message.</string>
+	<key>NSFaceIDUsageDescription</key>
+	<string>Extensions can ask for Face ID before using a key they keep on this iPhone, for example to approve a sign-in.</string>
+	<key>NSSpeechRecognitionUsageDescription</key>
+	<string>pi turns what you dictate into text, on this device when it can.</string>
+	<!-- Plain HTTP to any host, for the app's own requests too: model servers the user names (Ollama on a Mac, a gateway
+	     inside a VPN tunnel, a Tailscale name), Crabbox brokers, and extensions' fetches. On iOS, NSAllowsArbitraryLoads is ignored when NSAllowsLocalNetworking or
+	     NSAllowsArbitraryLoadsInWebContent is also set, so it stands alone (it covers both). -->
+	<!-- Shared extensions (SharedExtension.swift): a .piext file from Share opens in pi, which asks before adding it.
+	     Copied into the app's Inbox, not opened in place. -->
+	<key>UTExportedTypeDeclarations</key>
+	<array>
+		<dict>
+			<key>UTTypeIdentifier</key>
+			<string>dev.pimobile.session</string>
+			<key>UTTypeDescription</key>
+			<string>pi session</string>
+			<key>UTTypeConformsTo</key>
+			<array>
+				<string>public.data</string>
+				<string>public.content</string>
+			</array>
+			<key>UTTypeTagSpecification</key>
+			<dict>
+				<key>public.filename-extension</key>
+				<array>
+					<string>pisession</string>
+				</array>
+			</dict>
+		</dict>
+		<dict>
+			<key>UTTypeIdentifier</key>
+			<string>dev.pimobile.extension</string>
+			<key>UTTypeDescription</key>
+			<string>pi extension</string>
+			<key>UTTypeConformsTo</key>
+			<array>
+				<string>public.data</string>
+				<string>public.content</string>
+			</array>
+			<key>UTTypeTagSpecification</key>
+			<dict>
+				<key>public.filename-extension</key>
+				<array>
+					<string>piext</string>
+				</array>
+				<key>public.mime-type</key>
+				<array>
+					<string>application/vnd.pimobile.extension+json</string>
+				</array>
+			</dict>
+		</dict>
+	</array>
+	<key>CFBundleDocumentTypes</key>
+	<array>
+		<dict>
+			<key>CFBundleTypeName</key>
+			<string>pi extension</string>
+			<key>CFBundleTypeRole</key>
+			<string>Viewer</string>
+			<key>LSHandlerRank</key>
+			<string>Owner</string>
+			<key>LSItemContentTypes</key>
+			<array>
+				<string>dev.pimobile.extension</string>
+				<string>dev.pimobile.session</string>
+			</array>
+		</dict>
+	</array>
+	<key>LSSupportsOpeningDocumentsInPlace</key>
+	<false/>
+	<key>NSAppTransportSecurity</key>
+	<dict>
+		<key>NSAllowsArbitraryLoads</key>
+		<true/>
+	</dict>
+</dict>
+</plist>

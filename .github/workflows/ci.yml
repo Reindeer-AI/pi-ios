@@ -1,0 +1,75 @@
+name: CI
+
+# Builds the engine and the app (for the simulator, unsigned) on every push and pull request. No secrets.
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    # Public repositories build for free; a private one (this one, until it opens) would pay for macOS minutes.
+    if: ${{ !github.event.repository.private }}
+    runs-on: macos-15
+    timeout-minutes: 120
+    env:
+      HOMEBREW_NO_AUTO_UPDATE: '1'
+      PYTHONDONTWRITEBYTECODE: '1'
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+
+      - name: Select the newest Xcode 26
+        run: |
+          xcode="$(ls -d /Applications/Xcode_26*.app | sort -V | tail -1)"
+          test -n "$xcode"
+          echo "DEVELOPER_DIR=$xcode/Contents/Developer" >> "$GITHUB_ENV"
+
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: engine/package-lock.json
+
+      - name: Build the engine
+        run: |
+          cd engine
+          npm ci --ignore-scripts
+          npx tsc --noEmit -p .
+          npm run build
+
+      # a-Shell's commands, dash, CPython, and llama.cpp: rebuilt only when their scripts or patches change.
+      - name: Restore native components
+        id: native
+        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
+        with:
+          path: |
+            Vendor/ashell
+            Vendor/python
+            Vendor/llama
+          key: native-${{ hashFiles('Vendor/*.sh', 'Vendor/patches/**', 'Vendor/python-support/**') }}
+
+      - name: Build native components
+        if: steps.native.outputs.cache-hit != 'true'
+        run: |
+          command -v automake >/dev/null || brew install automake
+          Vendor/fetch-ashell.sh
+          Vendor/fetch-python.sh
+          Vendor/build-dash.sh
+          Vendor/build-llama.sh
+
+      # Apple silicon simulators only: the native components carry no Intel simulator slices.
+      - name: Build the app for the simulator
+        run: |
+          mkdir -p Vendor/build
+          xcodebuild build -project App/PiMobile.xcodeproj -scheme PiMobile \
+            -destination 'generic/platform=iOS Simulator' -derivedDataPath App/build/DerivedData \
+            ARCHS=arm64 CODE_SIGNING_ALLOWED=NO -quiet

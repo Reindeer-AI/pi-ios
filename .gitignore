@@ -1,0 +1,44 @@
+.DS_Store
+xcuserdata/
+*.xcuserstate
+
+# Engine: dependencies and build output (npm install && npm run build)
+engine/node_modules/
+engine/dist/
+# Provisioning profiles downloaded for scripts/build-ipa.sh --profile
+*.mobileprovision
+
+# Swift package and app build output; scripts/build-ipa.sh writes .ipa files to dist/
+dist/
+PiEngineKit/.build/
+App/build/
+Vendor/.build/
+Vendor/.swiftpm/
+.swiftpm/
+
+# Downloaded and built native components (Vendor/fetch-ashell.sh, build-dash.sh, build-llama.sh)
+Vendor/ashell/
+Vendor/build/
+Vendor/llama/
+Vendor/python/
+
+# A Crabbox broker token kept locally for testing (never commit it)
+.crabbox
+
+# Local secrets (never commit them)
+.env
+
+# Signing certificates with their private keys (never commit them; CI gets them from secrets)
+*.p12
+*.cer
+*.certSigningRequest
+
+# Demo recordings (large; shared outside git)
+demos/
+tools/mcp-mock/.mcp-mock-clients.json
+*.pem
+tools/mtls-test/.mtls-test/
+
+# Python caches
+__pycache__/
+*.pyc

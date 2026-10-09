@@ -1,0 +1,487 @@
+diff --git a/src/error.c b/src/error.c
+index 35f7bf5..fac173d 100644
+--- a/src/error.c
++++ b/src/error.c
+@@ -113,15 +113,27 @@ onint(void) {
+ 
+ 	intpending = 0;
+ 	sigclearmask();
++#if !TARGET_OS_IPHONE
+ 	if (!(rootshell && iflag)) {
+ 		signal(SIGINT, SIG_DFL);
+ 		raise(SIGINT);
+ 	}
++#endif
++	/* iOS: dash runs inside the host app, where raising SIGINT would terminate the app. Unwind instead. */
+ 	exitstatus = SIGINT + 128;
+ 	exraise(EXINT);
+ 	/* NOTREACHED */
+ }
+ 
++#if TARGET_OS_IPHONE
++/* Asks the running shell to stop, as SIGINT would: its next interrupt check unwinds with status 130. */
++void
++dash_ios_interrupt(void)
++{
++	intpending = 1;
++}
++#endif
++
+ #if TARGET_OS_IPHONE
+ #undef doformat
+ static void
+diff --git a/src/eval.c b/src/eval.c
+index 328757b..8cd7c00 100644
+--- a/src/eval.c
++++ b/src/eval.c
+@@ -51,6 +51,16 @@
+ #include "jobs.h"
+ #include "eval.h"
+ #include "builtins.h"
++#if TARGET_OS_IPHONE
++#include <pthread.h>
++#include <stdbool.h>
++#include <sys/stat.h>
++int cdcmd(int, char **);	/* restores the directory after a subshell (evalsubshell) */
++/* ios_system (exported, not in its headers): whether the next command starts as the session's main one, and the
++ * thread of the last command started otherwise. */
++void ios_IsMainThread(bool);
++pthread_t ios_getLastThreadId(void);
++#endif
+ #include "options.h"
+ #include "exec.h"
+ #include "redir.h"
+@@ -220,6 +230,11 @@ evaltree(union node *n, int flags)
+ 	}
+ 
+ 	dotrap();
++#if TARGET_OS_IPHONE
++	/* Checked before every command, so even loops of builtins stop when interrupted. */
++	if (intpending && !suppressint)
++		onint();
++#endif
+ 
+ #ifndef SMALL
+ 	displayhist = 1;	/* show history substitutions done with fc */
+@@ -497,12 +512,31 @@ evalsubshell(union node *n, int flags)
+ 			flags &=~ EV_TESTED;
+ nofork:
+ 		INTON;
+-		redirect(n->nredir.redirect, 0);
+ #if !TARGET_OS_IPHONE
++		redirect(n->nredir.redirect, 0);
+ 		evaltreenr(n->nredir.n, flags;
+ #else
+-		evaltree(n->nredir.n, flags);
+-		exitstatus = ios_getCommandStatus();
++		{
++			/*
++			 * No fork on iOS: the subshell runs in this shell, so its redirections and its change of directory
++			 * are undone when it ends ((cd dir && make) > log leaves both as they were).
++			 */
++			const char *pwd = lookupvar("PWD"), *oldpwd = lookupvar("OLDPWD");
++			char *savedpwd = pwd ? strdup(pwd) : NULL, *savedoldpwd = oldpwd ? strdup(oldpwd) : NULL;
++			struct redirtab *redirstop = pushredir(n->nredir.redirect);
++			redirect(n->nredir.redirect, REDIR_PUSH);
++			exitstatus = evaltree(n->nredir.n, flags);
++			unwindredir(redirstop);
++			pwd = lookupvar("PWD");
++			if (savedpwd && (pwd == NULL || strcmp(pwd, savedpwd) != 0)) {
++				char *cdargv[] = { "cd", savedpwd, NULL };
++				cdcmd(2, cdargv);
++				if (savedoldpwd)
++					setvar("OLDPWD", savedoldpwd, VEXPORT);
++			}
++			free(savedpwd);
++			free(savedoldpwd);
++		}
+ #endif
+ 		/* never returns */
+ 	}
+@@ -549,6 +583,28 @@ expredir(union node *n)
+ 
+ 
+ 
++#if TARGET_OS_IPHONE
++/*
++ * Whether a pipeline element runs in the shell's thread (a builtin, a function, a compound command) rather than as an
++ * external command, which starts without waiting. A command name that needs expanding counts as external.
++ */
++STATIC int
++ios_runsinshell(union node *n)
++{
++	struct cmdentry entry;
++	char *p;
++
++	if (n->type != NCMD || n->ncmd.args == NULL)
++		return 1;
++	for (p = n->ncmd.args->narg.text; *p; p++)
++		if ((unsigned char)*p >= 0x80)
++			return 0;
++	find_command(n->ncmd.args->narg.text, &entry, 0, pathval());
++	/* An unknown command starts nothing either: it only reports that it is not found. */
++	return entry.cmdtype != CMDNORMAL;
++}
++#endif
++
+ /*
+  * Evaluate a pipeline.  All the processes in the pipeline are children
+  * of the process creating the pipeline.  (This differs from some versions
+@@ -611,34 +667,98 @@ evalpipe(union node *n, int flags)
+ 	}
+ 	INTON;
+ #else
+-	// iOS: I need to go through the pipes in reverse order. 
+-	// So I store them in an array:
++	/*
++	 * iOS: commands are threads. External commands start without waiting; builtins, functions, and compound commands
++	 * run in this thread until they finish. So start the external commands first (last first), then run the others
++	 * from left to right: a producer runs before its consumer, and no element waits for one that has not started.
++	 * An element's ends of the pipes are its standard input and output (ios_redirected); every command started in it
++	 * gets copies, so the pipeline closes its own ends once the element has started (or, in this thread, finished).
++	 */
+ 	struct nodelist **lplist = malloc(pipelen * sizeof(struct nodelist*));
+-	int i  = 0; 
++	int (*pipes)[2] = malloc(pipelen * sizeof(*pipes));	/* pipes[j]: from element j to element j + 1 */
++	char *inShell = malloc(pipelen);
++	/*
++	 * The copies of pipe ends that external commands read from, with their pipes' identities: ios_system does not
++	 * close a command's input when the latest command it started is Python, so once the pipeline is done the
++	 * pipeline closes those left open, and a writer still running (python3 gen.py | head) gets EPIPE and ends.
++	 */
++	int *inputs = malloc(pipelen * sizeof(int));
++	struct stat *inputpipes = malloc(pipelen * sizeof(struct stat));
++	int i = 0;
+ 	for (lp = n->npipe.cmdlist ; lp ; lp = lp->next) {
+ 		lplist[i] = lp;
+ 		i++;
+ 	}
+-	flags &= ~EV_EXIT; // do not exit after each command
+-	// Try: call all commands, but wait for last one in the pipe. 
+-	// Question is: how? make evaltree return pid, wait for all pid? 
+-	int pid = ios_fork();
+-	for (int j = pipelen - 1; j >= 1; j--) {
+-		if (pipe(pip) < 0) {
++	for (int j = 0; j < pipelen - 1; j++) {
++		if (pipe(pipes[j]) < 0) {
+ 			sh_error("Pipe call failed");
+ 		}
+-		// Create stdin for the command:
+-		ios_dup2(pip[0], STDIN_FILENO); // sets child_stdin
+-		evaltree(lplist[j]->n, flags | EV_NOFORK); // starts command with child_stdin -> thread_stdin
+-		// Create stdout for the next command:
+-		ios_dup2(pip[1], STDOUT_FILENO);
+ 	}
+-	// j == 0, special case (no need to call dup2):
+-	evaltree(lplist[0]->n, flags | EV_NOFORK); // start the first command and wait for it to finish
+-	// Now wait for the last command at the end of the pipe to finish:
+-	ios_waitpid(pid); 
+-	ios_stopInteractive(); 
+-	status = ios_getCommandStatus();
++	for (int j = 0; j < pipelen; j++) {
++		inShell[j] = ios_runsinshell(lplist[j]->n);
++		inputs[j] = -1;
++	}
++	flags &= ~EV_EXIT; // do not exit after each command
++	int savedin = ios_redirected[0], savedout = ios_redirected[1];
++	/*
++	 * The last element, when it is an external command, takes the pipeline's pid, and the pipeline waits for it.
++	 * (ios_fork locks the pid table until a command starts, so it comes right before one.)
++	 */
++	int pid = -1;
++	for (int pass = 0; pass < 2; pass++) {
++		for (int k = 0; k < pipelen; k++) {
++			/* Pass 0: external commands, last first. Pass 1: the others, first first. */
++			int j = pass == 0 ? pipelen - 1 - k : k;
++			if (inShell[j] != pass)
++				continue;
++			ios_redirected[0] = j == 0 ? savedin : pipes[j - 1][0];
++			ios_redirected[1] = j == pipelen - 1 ? savedout : pipes[j][1];
++			if (pass == 0 && j == pipelen - 1)
++				pid = ios_fork();
++			ios_lastinputcopy = -1;
++			if (pass == 0) {
++				/*
++				 * External commands start as downstream ones, like those of ios_system's own pipelines: a main
++				 * command becomes the session's root thread, and a command writing to a pipe waits for the root
++				 * to end before it closes its streams, so `yes | head -2 | tr` waited forever. ios_system leaves
++				 * the first such thread joinable; nothing joins it, so detach it.
++				 */
++				pthread_t last = ios_getLastThreadId();
++				ios_IsMainThread(false);
++				evaltree(lplist[j]->n, flags | EV_NOFORK);
++				ios_IsMainThread(true);
++				if (ios_getLastThreadId() != 0 && ios_getLastThreadId() != last)
++					pthread_detach(ios_getLastThreadId());
++			} else
++				evaltree(lplist[j]->n, flags | EV_NOFORK);
++			if (pass == 0 && j > 0 && ios_lastinputcopy >= 0 && fstat(pipes[j - 1][0], &inputpipes[j]) == 0)
++				inputs[j] = ios_lastinputcopy;
++			if (j > 0)
++				close(pipes[j - 1][0]);
++			if (j < pipelen - 1)
++				close(pipes[j][1]);
++		}
++	}
++	ios_redirected[0] = savedin;
++	ios_redirected[1] = savedout;
++	if (inShell[pipelen - 1]) {
++		/* The last element ran here: its status is the pipeline's. */
++		status = exitstatus;
++	} else {
++		ios_waitpid(pid);
++		ios_stopInteractive();
++		status = ios_getCommandStatus();
++	}
++	for (int j = 1; j < pipelen; j++) {
++		struct stat input;
++		if (inputs[j] >= 0 && fstat(inputs[j], &input) == 0 && input.st_dev == inputpipes[j].st_dev
++		    && input.st_ino == inputpipes[j].st_ino)
++			close(inputs[j]);
++	}
++	free(inputs);
++	free(inputpipes);
++	free(inShell);
++	free(pipes);
+ 	free(lplist);
+ #endif
+ 	return status;
+@@ -686,8 +806,12 @@ evalbackcmd(union node *n, struct backcmd *result)
+ #else
+ 	FILE* old_stdout = thread_stdout;
+ 	thread_stdout = fdopen(pip[1], "w");
++	/* The substitution's output is the pipe (thread_stdout), whatever the surrounding commands redirect it to. */
++	int old_redirected = ios_redirected[1];
++	ios_redirected[1] = -1;
+ 	ifsfree();
+ 	evaltree(n, 0);
++	ios_redirected[1] = old_redirected;
+ 	thread_stdout = old_stdout;
+ #endif
+ 	result->fd = pip[0];
+@@ -940,6 +1064,7 @@ bail:
+ 
+ 	default:
+ #if TARGET_OS_IPHONE
++		ios_applyredirections();
+ 		if (!(flags & EV_NOFORK)) {
+ 			int pid = ios_fork();
+ 			ios_execv(argv[0], argv);
+@@ -1024,6 +1149,7 @@ evalbltin(const struct builtincmd *cmd, int argc, char **argv, int flags)
+ 		old_stdin = NULL; 
+ 		old_stdout = NULL; 
+ 		old_stderr = NULL; 
++		ios_applyredirections();
+ 		ios_activateChildStreams(&old_stdin, &old_stdout, &old_stderr);
+ #endif
+ 		status = (*cmd->builtin)(argc, argv);
+diff --git a/src/main.c b/src/main.c
+index 325e292..077cc26 100644
+--- a/src/main.c
++++ b/src/main.c
+@@ -152,7 +152,10 @@ main(int argc, char **argv)
+ 	login = procargs(argc, argv);
+ 	if (login) {
+ 		state = 1;
++#if !TARGET_OS_IPHONE
++		/* iOS: /etc/profile is the system's (the Mac's, in the Simulator), not the app's. */
+ 		read_profile("/etc/profile");
++#endif
+ state1:
+ 		state = 2;
+ #if !TARGET_OS_IPHONE
+diff --git a/src/redir.c b/src/redir.c
+index e93c80d..b95fe52 100644
+--- a/src/redir.c
++++ b/src/redir.c
+@@ -38,6 +38,8 @@
+ #include <signal.h>
+ #include <string.h>
+ #include <fcntl.h>
++#include <limits.h>
++#include <stdio.h>
+ #include <unistd.h>
+ #include <stdlib.h>
+ 
+@@ -74,8 +76,61 @@ MKINIT
+ struct redirtab {
+ 	struct redirtab *next;
+ 	int renamed[10];
++#if TARGET_OS_IPHONE
++	int ios_saved[3];	/* ios_redirected before this level */
++#endif
+ };
+ 
++#if TARGET_OS_IPHONE
++/*
++ * iOS: commands are threads (ios_system), and each takes its standard streams from one-shot ios_dup2 calls, closing
++ * them when it ends. So dash keeps what 0, 1, and 2 are redirected to (by redirections and pipelines; -1: not
++ * redirected) and gives every command it starts its own copies (ios_applyredirections). A redirection then covers
++ * every command of a compound command or function, not only the first, and loops reading a redirected input keep
++ * reading where the last command stopped.
++ */
++int ios_redirected[3] = { -1, -1, -1 };
++/* The copy of a redirected standard input that ios_applyredirections last gave a command (-1: none). */
++int ios_lastinputcopy = -1;
++
++STATIC int ios_threadfd(int fd)
++{
++	FILE *stream = fd == 0 ? thread_stdin : fd == 1 ? thread_stdout : thread_stderr;
++	return stream != NULL ? fileno(stream) : fd;
++}
++
++void ios_applyredirections(void)
++{
++	int fd;
++
++	ios_lastinputcopy = -1;
++	for (fd = 0; fd < 3; fd++)
++		if (ios_redirected[fd] >= 0) {
++			int copy = dup(ios_redirected[fd]);
++			if (copy >= 0) {
++				ios_dup2(copy, fd);
++				if (fd == 0)
++					ios_lastinputcopy = copy;
++			}
++		}
++}
++
++/* Redirects standard stream fd to f, which openredirect opened (or, for >&n and <&n, the descriptor to copy). */
++STATIC void ios_redirect(union node *redir, int fd, int f)
++{
++	int target;
++
++	if (redir->nfile.type == NTOFD || redir->nfile.type == NFROMFD) {
++		if (f < 0)	/* >&- */
++			target = open("/dev/null", O_RDWR);
++		else
++			target = dup(f <= 2 ? (ios_redirected[f] >= 0 ? ios_redirected[f] : ios_threadfd(f)) : f);
++	} else
++		target = f;
++	ios_redirected[fd] = target;
++}
++#endif
++
+ 
+ MKINIT struct redirtab *redirlist;
+ 
+@@ -142,7 +197,19 @@ redirect(union node *redir, int flags)
+ 			continue;
+ 
+ 		fd = n->nfile.fd;
+-		
++
++#if TARGET_OS_IPHONE
++		if (fd <= 2) {
++			if (sv) {
++				/* An earlier redirection of fd at this level (cmd >a >b) is replaced. */
++				if (sv->renamed[fd] != EMPTY && ios_redirected[fd] >= 0 && ios_redirected[fd] != sv->ios_saved[fd])
++					close(ios_redirected[fd]);
++				sv->renamed[fd] = CLOSED;
++			}
++			ios_redirect(n, fd, newfd);
++			continue;
++		}
++#endif
+ 		// This block could cause the program to close stdout (fd = 1). 
+ 		if (sv) {
+ 			int closed;
+@@ -279,6 +346,15 @@ dupredirect(redir, f)
+ #endif
+ 	if (redir->nfile.type == NTOFD || redir->nfile.type == NFROMFD) {
+ 		/* if not ">&-" */
++#if TARGET_OS_IPHONE
++		/*
++		 * Descriptor 2 belongs to the host app, and ios_system's dup2 does not map it to the command's stderr
++		 * (it does map 0 and 1, including to pipeline streams). Duplicate the command's own stderr instead, so
++		 * ">&2" reaches it rather than the app's.
++		 */
++		if (f == 2 && thread_stderr != NULL)
++			f = dup(fileno(thread_stderr));
++#endif
+ 		if (f >= 0) {
+ #ifdef notyet
+ 			if (memory[f])
+@@ -321,9 +397,6 @@ openhere(union node *redir)
+ 	int pip[2];
+ 	size_t len = 0;
+ 
+-	if (pipe(pip) < 0)
+-		sh_error("Pipe call failed");
+-
+ 	p = redir->nhere.doc->narg.text;
+ 	if (redir->type == NXHERE) {
+ 		expandarg(redir->nhere.doc, NULL, EXP_QUOTED);
+@@ -331,6 +404,27 @@ openhere(union node *redir)
+ 	}
+ 
+ 	len = strlen(p);
++	if (len > PIPESIZE) {
++		/*
++		 * No fork on iOS to feed a pipe a document larger than it holds (the command would wait on it forever): the
++		 * document goes through a temporary file instead, unlinked once open.
++		 */
++		char path[PATH_MAX];
++		const char *tmp = getenv("TMPDIR");
++		int fd;
++
++		snprintf(path, sizeof(path), "%s/dash-here-XXXXXX", tmp && *tmp ? tmp : "/tmp");
++		fd = mkstemp(path);
++		if (fd < 0)
++			sh_error("cannot create a file for the here document");
++		unlink(path);
++		xwrite(fd, p, len);
++		lseek(fd, 0, SEEK_SET);
++		return fd;
++	}
++
++	if (pipe(pip) < 0)
++		sh_error("Pipe call failed");
+ 	if (len <= PIPESIZE) {
+ 		xwrite(pip[1], p, len);
+ 		goto out;
+@@ -367,6 +461,19 @@ popredir(int drop)
+ 
+ 	INTOFF;
+ 	rp = redirlist;
++#if TARGET_OS_IPHONE
++	/* Undo this level's standard-stream redirections; `exec` (drop) keeps them. */
++	for (i = 0; i < 3; i++) {
++		if (rp->renamed[i] == EMPTY)
++			continue;
++		if (!drop) {
++			if (ios_redirected[i] >= 0 && ios_redirected[i] != rp->ios_saved[i])
++				close(ios_redirected[i]);
++			ios_redirected[i] = rp->ios_saved[i];
++		}
++		rp->renamed[i] = EMPTY;
++	}
++#endif
+ 	for (i = 0 ; i < 10 ; i++) {
+ 		int closed;
+ 
+@@ -493,6 +600,10 @@ struct redirtab *pushredir(union node *redir)
+ 	redirlist = sv;
+ 	for (i = 0; i < 10; i++)
+ 		sv->renamed[i] = EMPTY;
++#if TARGET_OS_IPHONE
++	for (i = 0; i < 3; i++)
++		sv->ios_saved[i] = ios_redirected[i];
++#endif
+ 
+ out:
+ 	return q;
+diff --git a/src/redir.h b/src/redir.h
+index 1cf2761..e5cd18b 100644
+--- a/src/redir.h
++++ b/src/redir.h
+@@ -49,4 +49,9 @@ int savefd(int, int);
+ int redirectsafe(union node *, int);
+ void unwindredir(struct redirtab *stop);
+ struct redirtab *pushredir(union node *redir);
++#if TARGET_OS_IPHONE
++extern int ios_redirected[3];
++extern int ios_lastinputcopy;
++void ios_applyredirections(void);
++#endif
+ 

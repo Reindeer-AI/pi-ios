@@ -1,0 +1,71 @@
+diff --git a/tools/server/server-http.cpp b/tools/server/server-http.cpp
+index 33cbb15..1c145dc 100644
+--- a/tools/server/server-http.cpp
++++ b/tools/server/server-http.cpp
+@@ -6,8 +6,11 @@
+ 
+ #include <cpp-httplib/httplib.h>
+ 
++#include <atomic>
++#include <chrono>
+ #include <functional>
+ #include <future>
++#include <thread>
+ #include <memory>
+ #include <string>
+ #include <thread>
+@@ -23,6 +26,7 @@ public:
+     std::vector<std::thread> threads; // one thread per listener
+     std::unique_ptr<httplib::ThreadPool> pool; // single pool shared among all listeners
+     int n_threads_http = 0;
++    std::atomic<bool> stopping{false}; // set by stop(), so a listener does not listen again
+ };
+ 
+ class server_http_task_queue : public httplib::TaskQueue {
+@@ -494,6 +498,7 @@ bool server_http_context::start() {
+     // Bind and listen
+ 
+     listening_addresses.clear();
++    pimpl->stopping = false;
+     for (size_t i = 0; i < pimpl->servers.size(); ++i) {
+         const auto & srv = pimpl->servers[i];
+         const auto & host = pimpl->hosts[i];
+@@ -528,9 +533,27 @@ bool server_http_context::start() {
+     pimpl->pool = std::make_unique<httplib::ThreadPool>(pimpl->n_threads_http, pimpl->n_threads_http + 1024);
+     for (size_t i = 0; i < pimpl->servers.size(); ++i) {
+         const auto & srv = pimpl->servers[i];
+-        pimpl->threads.emplace_back([srv = srv.get(), addr = listening_addresses[i]] {
+-            if (!srv->listen_after_bind()) {
+-                SRV_ERR("listener on %s stopped unexpectedly\n", addr.c_str());
++        pimpl->threads.emplace_back([impl = pimpl.get(), srv = srv.get(), host = pimpl->hosts[i], port = this->port, addr = listening_addresses[i]] {
++            // pi on iOS: iOS takes back a suspended app's listening socket, and accept() then fails. Listen again on a
++            // new socket rather than leave the loaded model unreachable.
++            while (!srv->listen_after_bind()) {
++                bool bound = false;
++                for (int attempt = 0; attempt < 50 && !bound && !impl->stopping; ++attempt) {
++                    std::this_thread::sleep_for(std::chrono::milliseconds(200));
++                    srv->stop(); // clears the failed listen's decommissioned state
++                    bound = srv->bind_to_port(host, port);
++                    if (bound && impl->stopping) {
++                        srv->stop();
++                        return;
++                    }
++                }
++                if (!bound) {
++                    if (!impl->stopping) {
++                        SRV_ERR("listener on %s stopped unexpectedly\n", addr.c_str());
++                    }
++                    return;
++                }
++                SRV_WRN("listener on %s stopped unexpectedly; listening again\n", addr.c_str());
+             }
+         });
+         srv->wait_until_ready();
+@@ -546,6 +569,7 @@ bool server_http_context::start() {
+ }
+ 
+ void server_http_context::stop() const {
++    pimpl->stopping = true;
+     for (const auto & srv : pimpl->servers) {
+         if (srv) {
+             srv->stop();

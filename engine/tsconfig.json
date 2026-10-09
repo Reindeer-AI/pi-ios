@@ -1,0 +1,18 @@
+{
+	"compilerOptions": {
+		"target": "ES2023",
+		"module": "ESNext",
+		"moduleResolution": "Bundler",
+		"lib": ["ES2023", "DOM", "DOM.Iterable"],
+		"strict": true,
+		"noEmit": true,
+		"allowImportingTsExtensions": true,
+		"skipLibCheck": true,
+		"isolatedModules": true,
+		"verbatimModuleSyntax": true,
+		// The few pi-coding-agent modules the engine bundles as they are (extensions/coding-agent.ts); its package
+		// exports only its entry point.
+		"paths": { "@earendil-works/pi-coding-agent/dist/*": ["./node_modules/@earendil-works/pi-coding-agent/dist/*"] }
+	},
+	"include": ["src"]
+}
