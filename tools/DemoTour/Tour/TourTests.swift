@@ -1313,6 +1313,80 @@ final class TourTests: XCTestCase {
         pause(2)
     }
 
+    /// An extension's source in Settings → Extensions: its files listed, one opened, changed and saved (the extension
+    /// loads again), then changed back.
+    func testExtensionSource() throws {
+        launchReady()
+        tap(pi.buttons["Settings"])
+        tap(pi.buttons["Extensions and skills"].firstMatch)
+        // A default's row is a toggle: its name opens it.
+        let row = pi.staticTexts.matching(NSPredicate(format: "label BEGINSWITH %@", "personal-details")).firstMatch
+        XCTAssertTrue(row.waitForExistence(timeout: 15), "Personal details among the extensions")
+        for _ in 0..<5 where !row.isHittable { pi.swipeUp(); pause(0.5) }
+        tap(row)
+        tap(pi.buttons["Source"].firstMatch)
+        let file = pi.buttons.matching(NSPredicate(format: "label ENDSWITH %@", ".ts")).firstMatch
+        XCTAssertTrue(file.waitForExistence(timeout: 15), "the extension's files")
+        print("source files: \(pi.buttons.matching(NSPredicate(format: "label CONTAINS %@", ".")).allElementsBoundByIndex.map(\.label))")
+        tap(file)
+        let editor = pi.textViews.firstMatch
+        XCTAssertTrue(editor.waitForExistence(timeout: 10), "the file's text")
+        let original = editor.value as? String ?? ""
+        XCTAssertTrue(original.contains("export default"), "the extension's code")
+        // A tap on a line of text focuses the editor (one in its middle, in the simulator, did not).
+        editor.coordinate(withNormalizedOffset: CGVector(dx: 0.3, dy: 0.12)).tap()
+        pause(1)
+        let mark = "// edited in Settings\n"
+        editor.typeText(mark)
+        tap(pi.buttons["Save"].firstMatch)
+        XCTAssertTrue(pi.staticTexts["Saved and loaded."].waitForExistence(timeout: 20), "saved, and the extension loaded again")
+        pause(2)
+        editor.typeText(String(repeating: XCUIKeyboardKey.delete.rawValue, count: mark.count))
+        tap(pi.buttons["Save"].firstMatch)
+        pause(3)
+        XCTAssertEqual(editor.value as? String, original, "changed back")
+        pause(1)
+    }
+
+    /// The agent adding an extension from the internet asks first; declined, nothing is added.
+    func testExtensionConsent() throws {
+        executionTimeAllowance = 6 * 60
+        launchReady()
+        tap(pi.buttons["New session"].firstMatch)
+        pause(1.5)
+        let message = pi.textFields["Message pi"]
+        tap(message)
+        message.typeText("Call the extension_add tool once with source github:example/pi-extension-demo, then tell me exactly what it returned.")
+        tap(pi.buttons["Send"].firstMatch)
+        let alert = pi.alerts["Add this extension?"]
+        XCTAssertTrue(alert.waitForExistence(timeout: 120), "pi asks before adding an extension from GitHub")
+        print("consent: \(alert.staticTexts.allElementsBoundByIndex.map(\.label))")
+        pause(2)
+        alert.buttons["Cancel"].tap()
+        let stop = pi.buttons["Stop"].firstMatch
+        let end = Date().addingTimeInterval(3 * 60)
+        while stop.exists && Date() < end { pause(1) }
+        pause(2)
+        let declined = pi.staticTexts.matching(NSPredicate(format: "label CONTAINS[c] %@", "allow")).firstMatch
+        XCTAssertTrue(declined.waitForExistence(timeout: 10), "the agent heard the user didn't allow it")
+        print("reply: \(declined.label)")
+        // pip takes pure-Python packages only: numpy (compiled) has none, six does.
+        tap(message)
+        message.typeText("!pip install --user numpy 2>&1 | tail -1; pip install --user six 2>&1 | tail -1")
+        tap(pi.buttons["Send"].firstMatch)
+        // The command's card, opened once pip is done.
+        pause(60)
+        if pi.buttons["Hide keyboard"].exists { pi.buttons["Hide keyboard"].tap() }
+        tap(pi.staticTexts.matching(NSPredicate(format: "label BEGINSWITH %@", "pip install --user numpy")).firstMatch)
+        let refused = pi.staticTexts.matching(NSPredicate(format: "label CONTAINS %@", "No matching distribution found for numpy")).firstMatch
+        let shown = refused.waitForExistence(timeout: 60)
+        print("pip texts: \(pi.staticTexts.allElementsBoundByIndex.map(\.label).filter { $0.contains("pip") || $0.contains("numpy") || $0.contains("ERROR") || $0.contains("six") })")
+        XCTAssertTrue(shown, "pip refused numpy's compiled wheels")
+        let installed = pi.staticTexts.matching(NSPredicate(format: "label CONTAINS %@", "Successfully installed six")).firstMatch
+        XCTAssertTrue(installed.waitForExistence(timeout: 60), "pip installed six")
+        pause(2)
+    }
+
     /// Opening a shared session (-openSharedFile, set by the shell to a .pisession in the app's tmp): the sheet, then the
     /// session, opened as a new one with its history.
     func testOpenSharedSession() throws {

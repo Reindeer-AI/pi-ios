@@ -112,7 +112,8 @@ struct ExtensionsView: View {
                 ForEach(inventory?.defaults ?? []) { item in
                     NavigationLink {
                         ExtensionDetailView(item: item, isDefault: true, remove: { removing = .extensionItem(item, session: nil) },
-                                            share: { share(item, session: nil) })
+                                            share: { share(item, session: nil) },
+                                            source: { ExtensionSourceView(app: app, name: item.name, sessionId: nil, fromGitHub: item.revision != nil) })
                     } label: {
                         Toggle(isOn: Binding(get: { item.enabled }, set: { on in setEnabled(item, on) })) {
                             ItemLabel(item: item)
@@ -173,7 +174,8 @@ struct ExtensionsView: View {
                             ExtensionDetailView(
                                 item: item, isDefault: false, remove: { removing = .extensionItem(item, session: group.id) },
                                 makeDefault: { perform("Making \(item.name) a default") { try await makeDefault(item, session: group.id) } },
-                                share: { share(item, session: group.id) }
+                                share: { share(item, session: group.id) },
+                                source: { ExtensionSourceView(app: app, name: item.name, sessionId: group.id, fromGitHub: item.revision != nil) }
                             )
                         } label: {
                             ItemLabel(item: item)
@@ -369,6 +371,8 @@ private struct ExtensionDetailView: View {
     var makeDefault: (() -> Void)?
     /// Sends it to someone else's pi (`SharedExtension.swift`).
     var share: (() -> Void)?
+    /// Its files, to read and change (`ExtensionSourceView.swift`).
+    var source: (() -> ExtensionSourceView)?
     @Environment(\.dismiss) private var dismiss
 
     var body: some View {
@@ -390,6 +394,9 @@ private struct ExtensionDetailView: View {
                 Section("Notes") { ForEach(item.notes, id: \.self) { Text($0).font(.footnote) } }
             }
             Section {
+                if let source {
+                    NavigationLink { source() } label: { Label("Source", systemImage: "chevron.left.forwardslash.chevron.right") }
+                }
                 if let share {
                     Button("Share…", systemImage: "square.and.arrow.up", action: share)
                 }

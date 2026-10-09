@@ -378,6 +378,19 @@ final class AppModel {
             default: throw EngineError.unknownMethod("synced.\(method)")
             }
         }
+        // Asks before the agent adds an extension from the internet (`extension_add` with npm:, git:, or github:): its
+        // code runs in pi only once the user agrees. One the agent wrote in the session's workspace needs no asking.
+        engine.register(service: "consent") { method, params in
+            guard method == "addExtension" else { throw EngineError.unknownMethod("consent.\(method)") }
+            let arguments = params as? [String: Any] ?? [:]
+            let source = arguments["source"] as? String ?? "?"
+            let everySession = arguments["scope"] as? String == "default"
+            return await UserDialog.confirm(
+                title: "Add this extension?",
+                message: "The agent wants to add \(source)\(everySession ? " for every session" : " to this session"). Its code runs in pi; you can read and change it in Settings → Extensions.",
+                confirmLabel: "Add"
+            )
+        }
         // The pasteboard, for extensions (pi-coding-agent's `copyToClipboard`).
         engine.register(service: "clipboard") { method, params in
             guard method == "write" else { throw EngineError.unknownMethod("clipboard.\(method)") }

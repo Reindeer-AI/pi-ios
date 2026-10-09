@@ -7,11 +7,12 @@ Python, git, a browser, extensions and their apps, and on-device models, with an
 
 - **Sessions** that keep working in the background, resume after the app is closed, compact their context the way pi
   does, and can be forked, shared as a file (`.pisession`) and opened on another device.
-- **Tools on the device**: a POSIX shell with common Unix tools, curl and git; CPython with pip (pure-Python packages);
+- **Tools on the device**: a POSIX shell with common Unix tools, curl and git; CPython with pip (pure-Python wheels);
   a browser the agent can drive; files and images it can read.
 - **Models**: pi's providers (sign in or add an API key), any OpenAI-compatible server (Ollama on a Mac, a gateway), and
   on-device models through llama.cpp.
-- **Extensions and skills**, as in pi: install them from GitHub, npm, git or a file, or let the agent write them. An
+- **Extensions and skills**, as in pi: install them from GitHub, npm, git or a file, or let the agent write them (it
+  asks before adding one from the internet). Every extension's source can be read and changed in Settings. An
   extension can bring an **app**: a page that stays open beside the session, minimized to its dock.
 - **MCP servers**, **Shortcuts** ("Ask pi"), attachments, dictation.
 - **A vault** for card and document numbers, behind Face ID: extensions and the agent see each item's name, and use its

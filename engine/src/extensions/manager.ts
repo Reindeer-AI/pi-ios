@@ -528,6 +528,10 @@ export class Extensions {
 					execute: async (args, api, context) => {
 						const scope: Scope = args.scope ?? "session";
 						const sessionId = sessionOf(api);
+						// Code from the internet runs only once the user agrees (the app asks); a path is the session's own.
+						if (remoteSource(args.source) && !(await request<boolean>("consent", "addExtension", { source: args.source, scope }))) {
+							return { content: [{ type: "text", text: `The user didn't allow adding ${args.source}.` }], isError: true };
+						}
 						const record = await this.fetch(args.source, envOf(api), scope, this.sessionEnv(sessionId).cwd);
 						const loaded = await this.load(record, scope, sessionId);
 						await api.commit(async (tx) => {
@@ -719,6 +723,40 @@ export class Extensions {
 		await runtime.prepare(source);
 		const root = dirname(source);
 		return { root, files: runtime.files.filter((file) => file.startsWith(`${root}/`)) };
+	}
+
+	// ---- source ----
+
+	/**
+	 * An extension's source, to read and change in Settings: its folder (a path extension's package, or the installed
+	 * package around its entry) and its files there by relative path, without its dependencies.
+	 */
+	async source(name: string, sessionId?: number): Promise<{ root: string; files: string[] }> {
+		const { record } = this.named(name, sessionId);
+		let root: string;
+		let files: string[];
+		if (record.kind === "path") ({ root, files } = await this.packageOf(record, sessionId));
+		else {
+			root = await packageFolder(this.entryPath(record, record.entries[0] ?? "", sessionId), this.installRoot);
+			files = await listFiles(root);
+		}
+		const relativePaths = files.map((file) => file.slice(root.length + 1)).filter((file) => !/(^|\/)(node_modules|\.git)\//.test(file));
+		return { root, files: relativePaths.sort() };
+	}
+
+	/** Loads an extension again where it's loaded (a default, or a session's own), after its files changed. */
+	async reload(name: string, sessionId?: number): Promise<void> {
+		const { record, scope } = this.named(name, sessionId);
+		await this.load(record, scope, scope === "session" ? sessionId : undefined);
+	}
+
+	/** A session's own extension of that name, else the default. */
+	private named(name: string, sessionId?: number): { record: ExtensionRecord; scope: Scope } {
+		const own = sessionId === undefined ? undefined : this.loaded.get(Extensions.registryName("session", name, sessionId));
+		if (own) return { record: own.record, scope: "session" };
+		const loaded = this.loaded.get(Extensions.registryName("default", name));
+		if (!loaded) throw new Error(`No extension named ${name}`);
+		return { record: loaded.record, scope: "default" };
 	}
 
 	/** Adds a shared extension (a .piext file the user opened) for every session: from its source, or from its files. */
@@ -1209,6 +1247,15 @@ async function existsFile(path: string): Promise<boolean> {
 	}
 }
 
+/** The package an installed entry belongs to: the nearest folder above it with a package.json, up to the install root
+ * (an npm or git package, a GitHub folder); without one, the entry's own folder (a single file from GitHub). */
+async function packageFolder(entry: string, installRoot: string): Promise<string> {
+	for (let folder = dirname(entry); folder.startsWith(`${installRoot}/`); folder = dirname(folder)) {
+		if (await existsFile(`${folder}/package.json`)) return folder;
+	}
+	return dirname(entry);
+}
+
 /** Every file under `directory`. */
 async function listFiles(directory: string): Promise<string[]> {
 	const files: string[] = [];
@@ -1277,6 +1324,11 @@ export function gitHubSource(source: string): GitHubSource | undefined {
 	const page = /^https?:\/\/github\.com\/([\w.-]+)\/([\w.-]+?)(?:\.git)?(?:\/(?:tree|blob)\/([^/]+)(?:\/(.*?))?)?\/?$/.exec(source);
 	if (page) return { owner: page[1], repo: page[2], path: page[4] ?? "", ...(page[3] ? { ref: page[3] } : {}) };
 	return undefined;
+}
+
+/** A source that downloads code (npm, git, GitHub), as opposed to a path on the device. */
+function remoteSource(source: string): boolean {
+	return /^(npm|git):/.test(source) || gitHubSource(source) !== undefined || /^https?:\/\//.test(source);
 }
 
 function canonicalGitHubSource(spec: GitHubSource): string {

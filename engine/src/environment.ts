@@ -23,7 +23,7 @@ const GUIDES = {
 	python: `python3 is CPython 3.14 built for iOS, running inside the app.
 - The standard library works, including sqlite3, ssl, json, csv, urllib, http.client, hashlib, zipfile, and ctypes.
 - There are no processes: subprocess, os.system, os.fork, and multiprocessing fail ("ios does not support processes"). Do the work in Python itself.
-- pip install --user installs pure-Python packages into this session's .python folder, and they stay across app restarts. Packages with compiled code (numpy, pandas, lxml, cryptography, …) and packages that must be built from source (they fail with "ios does not support processes") cannot be installed. venv does not work.
+- pip install --user installs pure-Python packages into this session's .python folder, and they stay across app restarts. Packages with compiled code (numpy, pandas, lxml, cryptography, …) and packages published only as source cannot be installed: pip takes pure-Python wheels only, and says "No matching distribution" for anything else. venv does not work.
 - No matplotlib: for charts, compute in Python and draw with show_html (for example Chart.js from a CDN).
 - Memory is a phone's: read large files in pieces rather than whole.`,
 

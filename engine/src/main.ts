@@ -646,6 +646,15 @@ onCommand("session.prompt", async ({ id, text: typed, whenBusy }: { id: number; 
 /** A shared extension file's contents (.piext), for the share sheet: a session's extension, or a default. */
 onCommand("extensions.share", ({ name, sessionId }: { name: string; sessionId?: number }) => requireEngine().extensions.share(name, sessionId));
 
+/** An extension's folder and files, to read and change in Settings (ExtensionSourceView). */
+onCommand("extensions.source", ({ name, sessionId }: { name: string; sessionId?: number }) => requireEngine().extensions.source(name, sessionId));
+
+/** Loads an extension again after its files changed in Settings. */
+onCommand("extensions.reload", async ({ name, sessionId }: { name: string; sessionId?: number }) => {
+	await requireEngine().extensions.reload(name, sessionId);
+	return null;
+});
+
 /** Adds a shared extension (a .piext file the user opened in pi, and agreed to add) for every session. */
 onCommand("extensions.import", ({ shared }: { shared: SharedExtension }) => {
 	const { extensions, root } = requireEngine();
