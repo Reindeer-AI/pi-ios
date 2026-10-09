@@ -152,7 +152,7 @@ final class AppModel {
             self.content = content
             self.app = app
             if app != nil, case .html(let html) = content {
-                page = AppPage(html: html, state: state)
+                page = AppPage(html: html, state: state, extensionName: extensionName)
             } else {
                 page = nil
             }
@@ -390,6 +390,12 @@ final class AppModel {
                 message: "The agent wants to add \(source)\(everySession ? " for every session" : " to this session"). Its code runs in pi; you can read and change it in Settings → Extensions.",
                 confirmLabel: "Add"
             )
+        }
+        // The device's location for an extension (`pi.location()`), once the user allows it (ExtensionPermissions).
+        engine.register(service: "device") { method, params in
+            guard method == "location" else { throw EngineError.unknownMethod("device.\(method)") }
+            let requester = (params as? [String: Any])?["requester"] as? String ?? "?"
+            return try await ExtensionPermissions.shared.location(for: requester)
         }
         // The pasteboard, for extensions (pi-coding-agent's `copyToClipboard`).
         engine.register(service: "clipboard") { method, params in

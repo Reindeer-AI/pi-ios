@@ -72,6 +72,7 @@ public final class PiEngine: NSObject {
             return try await self.handle(service: service, method: method, params: params)
         }
         webView.navigationDelegate = self
+        webView.uiDelegate = self
         registerBuiltInServices()
         schemeHandler.netProxy.onFailure = { [weak self] message in self?.onLog?("warn", "net: \(message)") }
     }
@@ -137,6 +138,15 @@ public final class PiEngine: NSObject {
             self?.onLog?(level, params as? String ?? String(describing: params))
             return nil
         }
+    }
+}
+
+extension PiEngine: WKUIDelegate {
+    /// No camera or microphone for the engine's page: every extension runs here, so a request couldn't be put to the
+    /// user as one extension's. An extension's app page asks for them instead (the app's ExtensionPermissions).
+    public func webView(_ webView: WKWebView, decideMediaCapturePermissionsFor origin: WKSecurityOrigin, initiatedBy frame: WKFrameInfo,
+                        type: WKMediaCaptureType) async -> WKPermissionDecision {
+        .deny
     }
 }
 

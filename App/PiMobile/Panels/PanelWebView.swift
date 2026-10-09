@@ -3,8 +3,9 @@ import WebKit
 
 /// A panel's web view: an extension's HTML page, the agent's `show_html` card, or a pi-tui view tree drawn by
 /// `panel.html`. Each panel has its own sandbox (no shared cookies or storage, no access to the app or the engine).
-/// The page talks back through `window.pi`: `post(data)`, `close(result)`, `prompt(text)`, and `onMessage(callback)`;
-/// its height is reported so the panel can size to its content.
+/// The page talks back through `window.pi`: `post(data)`, `close(result)`, `prompt(text)`, `onMessage(callback)`, and
+/// `location()`; its height is reported so the panel can size to its content. An extension's page may use the camera and
+/// microphone (getUserMedia) and the location once the user allows that extension (`ExtensionPermissions`).
 struct PanelWebView: UIViewRepresentable {
     enum Content: Equatable {
         case html(String)
@@ -13,6 +14,8 @@ struct PanelWebView: UIViewRepresentable {
     }
 
     let content: Content
+    /// The extension whose page it is; nil for the agent's show_html card.
+    var extensionName: String?
     /// Messages the extension posted (JSON), delivered in order to `pi.onMessage`.
     var messages: [String] = []
     var scrolls = false
@@ -30,12 +33,14 @@ struct PanelWebView: UIViewRepresentable {
         controller.addUserScript(WKUserScript(source: Self.bridge, injectionTime: .atDocumentStart, forMainFrameOnly: true))
         controller.add(WeakMessageHandler(context.coordinator), name: "pi")
         configuration.userContentController = controller
+        configuration.allowsInlineMediaPlayback = true
         let webView = WKWebView(frame: .zero, configuration: configuration)
         webView.isOpaque = false
         webView.backgroundColor = .clear
         webView.scrollView.backgroundColor = .clear
         webView.scrollView.isScrollEnabled = scrolls
         webView.navigationDelegate = context.coordinator
+        webView.uiDelegate = context.coordinator
         context.coordinator.load(content, into: webView)
         return webView
     }
@@ -50,7 +55,7 @@ struct PanelWebView: UIViewRepresentable {
         webView.configuration.userContentController.removeScriptMessageHandler(forName: "pi")
     }
 
-    final class Coordinator: NSObject, WKScriptMessageHandler, WKNavigationDelegate {
+    final class Coordinator: NSObject, WKScriptMessageHandler, WKNavigationDelegate, WKUIDelegate {
         var parent: PanelWebView
         private var loaded: Content?
         private var ready = false
@@ -66,7 +71,7 @@ struct PanelWebView: UIViewRepresentable {
             rendered = nil
             switch content {
             case .html(let html):
-                webView.loadHTMLString(Self.withViewport(html), baseURL: nil)
+                webView.loadHTMLString(Self.withViewport(html), baseURL: PageCapabilities.baseURL(for: parent.extensionName))
             case .view:
                 guard let url = Bundle.main.url(forResource: "panel", withExtension: "html") else {
                     preconditionFailure("panel.html is missing from the app bundle")
@@ -111,9 +116,16 @@ struct PanelWebView: UIViewRepresentable {
             guard let body = message.body as? [String: Any] else { return }
             if body["type"] as? String == "height", let value = body["value"] as? Double {
                 parent.onHeight(CGFloat(value))
+            } else if let webView = message.webView, PageCapabilities.handle(body, from: parent.extensionName, in: webView) {
+                return
             } else {
                 parent.onEvent(body)
             }
+        }
+
+        func webView(_ webView: WKWebView, decideMediaCapturePermissionsFor origin: WKSecurityOrigin, initiatedBy frame: WKFrameInfo,
+                     type: WKMediaCaptureType) async -> WKPermissionDecision {
+            await PageCapabilities.mediaDecision(type, for: parent.extensionName)
         }
 
         private static func withViewport(_ html: String) -> String {
@@ -127,6 +139,8 @@ struct PanelWebView: UIViewRepresentable {
     (() => {
       const send = (message) => window.webkit.messageHandlers.pi.postMessage(message);
       const listeners = [];
+      const requests = new Map();
+      let lastRequest = 0;
       window.pi = {
         post: (data) => send({ type: "message", data: data === undefined ? null : data }),
         close: (result) => send({ type: "close", result: result === undefined ? null : result }),
@@ -136,7 +150,20 @@ struct PanelWebView: UIViewRepresentable {
           send({ type: "prompt", text: String(text) });
         },
         onMessage: (callback) => { listeners.push(callback); },
+        // The device's location, once the user allows this extension (and iOS allows pi): { latitude, longitude,
+        // accuracy, altitude?, timestamp }.
+        location: () => new Promise((resolve, reject) => {
+          const id = ++lastRequest;
+          requests.set(id, { resolve, reject });
+          send({ type: "location", id });
+        }),
         _receive: (data) => { for (const callback of listeners) { try { callback(data); } catch (error) { console.error(error); } } },
+        _reply: (id, reply) => {
+          const request = requests.get(id);
+          requests.delete(id);
+          if (!request) return;
+          if (reply.error) request.reject(new Error(reply.error)); else request.resolve(reply.value);
+        },
         _event: (event) => send(event),
       };
       let last = 0;

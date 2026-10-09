@@ -1387,6 +1387,112 @@ final class TourTests: XCTestCase {
         pause(2)
     }
 
+    /// An extension's app page asks for the microphone and the location (Fixtures/permtest.ts, packed by make-piext.py and
+    /// opened with -openSharedFile from SHARED_FILE): pi asks the user about each, once; a refusal reaches the page, and
+    /// Settings → Extensions → permtest → Permissions changes it. The shell grants pi itself the microphone and location
+    /// (simctl privacy), sets the simulator's location, and clears pi's earlier answers.
+    func testExtensionPermissions() throws {
+        executionTimeAllowance = 6 * 60
+        dismissShortcutLeftovers(XCUIApplication(bundleIdentifier: "com.apple.springboard"))
+        let path = try XCTUnwrap(ProcessInfo.processInfo.environment["SHARED_FILE"], "the test extension's .piext")
+        pi.launchArguments += ["-openSharedFile", path]
+        launchReady()
+        tap(pi.buttons["Add to Every Session"].firstMatch)
+        pause(2)
+        if pi.buttons["Done"].exists { pi.buttons["Done"].firstMatch.tap() }
+        let message = pi.textFields["Message pi"]
+        func openApp() {
+            tap(message)
+            message.typeText("/permtest")
+            tap(pi.buttons["Send"].firstMatch)
+        }
+        tap(pi.buttons["New session"].firstMatch)
+        pause(1.5)
+        openApp()
+        let mic = pi.webViews.buttons["Microphone"]
+        XCTAssertTrue(mic.waitForExistence(timeout: 30), "the test app's page")
+        let output = pi.webViews.staticTexts.matching(NSPredicate(format: "label BEGINSWITH %@ OR label BEGINSWITH %@", "mic", "location")).firstMatch
+
+        mic.tap()
+        let askMic = pi.alerts["Allow “permtest” to use the microphone?"]
+        XCTAssertTrue(askMic.waitForExistence(timeout: 10), "pi asks before the page gets the microphone")
+        pause(1)
+        askMic.buttons["Allow"].tap()
+        XCTAssertTrue(output.waitForExistence(timeout: 15), "the page's result")
+        print("microphone: \(output.label)")
+        XCTAssertTrue(output.label.hasPrefix("mic: granted"), "the page has the microphone")
+
+        pi.webViews.buttons["Location"].tap()
+        let askLocation = pi.alerts["Allow “permtest” to use your location?"]
+        XCTAssertTrue(askLocation.waitForExistence(timeout: 10), "pi asks before the page gets the location")
+        pause(1)
+        askLocation.buttons["Don’t Allow"].tap()
+        let refused = pi.webViews.staticTexts.matching(NSPredicate(format: "label BEGINSWITH %@", "location error")).firstMatch
+        XCTAssertTrue(refused.waitForExistence(timeout: 10), "the refusal reaches the page")
+        print("location refused: \(refused.label)")
+
+        // Asked once: the page asks again, and pi doesn't.
+        mic.tap()
+        pause(2)
+        XCTAssertFalse(pi.alerts.firstMatch.exists, "no second question")
+
+        tap(pi.buttons["Minimize"].firstMatch)
+        pi.navigationBars.buttons.element(boundBy: 0).tap()
+        pause(1)
+        tap(pi.buttons["Settings"])
+        tap(pi.buttons["Extensions and skills"].firstMatch)
+        let row = pi.staticTexts.matching(NSPredicate(format: "label BEGINSWITH %@", "permtest")).firstMatch
+        XCTAssertTrue(row.waitForExistence(timeout: 15), "permtest among the extensions")
+        for _ in 0..<5 where !row.isHittable { pi.swipeUp(); pause(0.5) }
+        tap(row)
+        let micSwitch = pi.switches["Microphone"].firstMatch
+        let locationSwitch = pi.switches["Location"].firstMatch
+        XCTAssertTrue(locationSwitch.waitForExistence(timeout: 10), "its Permissions")
+        print("permissions: microphone \(micSwitch.value ?? "?"), location \(locationSwitch.value ?? "?")")
+        XCTAssertEqual(micSwitch.value as? String, "1")
+        XCTAssertEqual(locationSwitch.value as? String, "0")
+        locationSwitch.switches.firstMatch.exists ? locationSwitch.switches.firstMatch.tap() : locationSwitch.tap()
+        pause(1)
+        XCTAssertEqual(locationSwitch.value as? String, "1", "allowed in Settings")
+        pause(1)
+        // Back to Settings, and out.
+        for _ in 0..<3 where !pi.buttons["Done"].exists {
+            pi.navigationBars.buttons.element(boundBy: 0).tap()
+            pause(1)
+        }
+        tap(pi.buttons["Done"].firstMatch)
+        pause(1)
+
+        // Another session's page of the same extension: allowed now, without a question.
+        tap(pi.buttons["New session"].firstMatch)
+        pause(1.5)
+        openApp()
+        // The first session's page still runs, parked behind everything (and counted as hittable): the page on screen,
+        // in the sheet presented since, comes last.
+        let pages = pi.webViews.buttons.matching(identifier: "Location")
+        let end = Date().addingTimeInterval(30)
+        while pages.count < 2 && Date() < end { pause(0.5) }
+        let location = try XCTUnwrap(pages.allElementsBoundByIndex.last, "the test app again")
+        pause(1)
+        location.tap()
+        let found = pi.webViews.staticTexts.matching(NSPredicate(format: "label BEGINSWITH %@", "location: ")).firstMatch
+        XCTAssertTrue(found.waitForExistence(timeout: 30), "the page has the location")
+        print("location: \(found.label)")
+        XCTAssertFalse(pi.alerts.firstMatch.exists, "no question: allowed in Settings")
+        pause(1)
+
+        // From the extension's own code: the same answer holds.
+        tap(pi.buttons["Minimize"].firstMatch)
+        tap(message)
+        message.typeText("/permwhere")
+        tap(pi.buttons["Send"].firstMatch)
+        let notified = pi.staticTexts.matching(NSPredicate(format: "label BEGINSWITH %@", "where")).firstMatch
+        XCTAssertTrue(notified.waitForExistence(timeout: 30), "the extension's notice")
+        print("from the extension: \(notified.label)")
+        XCTAssertTrue(notified.label.hasPrefix("where: 37."), "the extension's code has the location")
+        pause(2)
+    }
+
     /// Opening a shared session (-openSharedFile, set by the shell to a .pisession in the app's tmp): the sheet, then the
     /// session, opened as a new one with its history.
     func testOpenSharedSession() throws {

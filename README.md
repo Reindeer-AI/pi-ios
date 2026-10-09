@@ -13,7 +13,8 @@ Python, git, a browser, extensions and their apps, and on-device models, with an
   on-device models through llama.cpp.
 - **Extensions and skills**, as in pi: install them from GitHub, npm, git or a file, or let the agent write them (it
   asks before adding one from the internet). Every extension's source can be read and changed in Settings. An
-  extension can bring an **app**: a page that stays open beside the session, minimized to its dock.
+  extension can bring an **app**: a page that stays open beside the session, minimized to its dock. Extensions can use
+  the camera, microphone and location once you allow each one.
 - **MCP servers**, **Shortcuts** ("Ask pi"), attachments, dictation.
 - **A vault** for card and document numbers, behind Face ID: extensions and the agent see each item's name, and use its
   values only after you allow it.

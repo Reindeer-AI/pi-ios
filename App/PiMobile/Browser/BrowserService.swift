@@ -778,7 +778,8 @@ extension BrowserTab: WKUIDelegate {
         initiatedBy frame: WKFrameInfo,
         type: WKMediaCaptureType
     ) async -> WKPermissionDecision {
-        // The app declares no camera or microphone use, and iOS ends an app that captures without declaring it.
+        // No camera or microphone for the agent's browser: the sites it visits aren't extensions the user allowed
+        // (ExtensionPermissions).
         .deny
     }
 }
@@ -796,10 +797,10 @@ enum UserDialog {
         }
     }
 
-    static func confirm(title: String, message: String, confirmLabel: String) async -> Bool {
+    static func confirm(title: String, message: String, confirmLabel: String, cancelLabel: String = "Cancel") async -> Bool {
         await withCheckedContinuation { continuation in
             let alert = UIAlertController(title: title, message: message, preferredStyle: .alert)
-            alert.addAction(UIAlertAction(title: "Cancel", style: .cancel) { _ in continuation.resume(returning: false) })
+            alert.addAction(UIAlertAction(title: cancelLabel, style: .cancel) { _ in continuation.resume(returning: false) })
             alert.addAction(UIAlertAction(title: confirmLabel, style: .default) { _ in continuation.resume(returning: true) })
             present(alert) { continuation.resume(returning: false) }
         }

@@ -25,6 +25,7 @@
 import { keysApi } from "../keys.ts";
 import { redact, vaultApi } from "../vault.ts";
 import { syncedApi } from "../synced.ts";
+import { locationApi } from "../device.ts";
 import { extensionOf, secretEnv, secretsApi } from "../secrets.ts";
 import type { JsonValue } from "@earendil-works/chord";
 import { BACKGROUND_CONTEXT } from "@earendil-works/chord/context";
@@ -522,6 +523,8 @@ class PiExtension implements Adapted {
 			vault: vaultApi(extensionOf(this.name), conversationId),
 			// iOS: values that follow the user to their other devices (synced.ts).
 			synced: syncedApi(extensionOf(this.name)),
+			// iOS: the device's location, once the user allows this extension (device.ts).
+			location: locationApi(extensionOf(this.name)),
 			events: eventBus(conversationId),
 			getActiveTools: () => [...instance.tools.keys()],
 			getAllTools: () => [...instance.tools.values()].map((tool) => ({ name: tool.name, description: tool.description })),
@@ -571,6 +574,7 @@ class PiExtension implements Adapted {
 			keys: keysApi(extensionOf(this.name)),
 			vault: vaultApi(extensionOf(this.name), conversationId),
 			synced: syncedApi(extensionOf(this.name)),
+			location: locationApi(extensionOf(this.name)),
 			sessionManager:
 				conversationId === undefined
 					? { getEntries: () => [], getBranch: () => [], getCwd: () => cwd, getSessionId: () => "", getSessionFile: () => undefined, getLeafId: () => null }

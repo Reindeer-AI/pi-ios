@@ -373,6 +373,8 @@ private struct ExtensionDetailView: View {
     var share: (() -> Void)?
     /// Its files, to read and change (`ExtensionSourceView.swift`).
     var source: (() -> ExtensionSourceView)?
+    /// What it was allowed or refused on this device (`ExtensionPermissions.swift`).
+    @State private var permissions: [(ExtensionPermissions.Capability, Bool)] = []
     @Environment(\.dismiss) private var dismiss
 
     var body: some View {
@@ -392,6 +394,22 @@ private struct ExtensionDetailView: View {
             }
             if !item.notes.isEmpty {
                 Section("Notes") { ForEach(item.notes, id: \.self) { Text($0).font(.footnote) } }
+            }
+            if !permissions.isEmpty {
+                Section {
+                    ForEach(permissions, id: \.0) { capability, allowed in
+                        Toggle(isOn: Binding(get: { allowed }, set: { on in
+                            ExtensionPermissions.shared.set(capability, for: item.name, to: on)
+                            permissions = ExtensionPermissions.shared.decisions(for: item.name)
+                        })) {
+                            Label(capability.title, systemImage: capability.systemImage)
+                        }
+                    }
+                } header: {
+                    Text("Permissions")
+                } footer: {
+                    Text("pi asks the first time it wants each. iOS also asks once for pi itself (Settings → Apps → pi).")
+                }
             }
             Section {
                 if let source {
@@ -413,6 +431,7 @@ private struct ExtensionDetailView: View {
             }
         }
         .navigationTitle(item.name)
+        .onAppear { permissions = ExtensionPermissions.shared.decisions(for: item.name) }
     }
 }
 

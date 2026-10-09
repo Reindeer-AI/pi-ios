@@ -12,7 +12,11 @@
 	<string>Ov23li02wDGlvGDHXiqN</string>
 	<!-- Dictation in the message box (Dictation.swift). iOS ends an app that asks without these. -->
 	<key>NSMicrophoneUsageDescription</key>
-	<string>pi listens while you dictate a message.</string>
+	<string>pi listens while you dictate a message, and extensions you allow can use the microphone, for example to record a voice note.</string>
+	<key>NSCameraUsageDescription</key>
+	<string>Extensions you allow can use the camera, for example to scan a receipt or a document.</string>
+	<key>NSLocationWhenInUseUsageDescription</key>
+	<string>Extensions you allow can use your location, for example to find flights from the nearest airport.</string>
 	<key>NSFaceIDUsageDescription</key>
 	<string>Extensions can ask for Face ID before using a key they keep on this iPhone, for example to approve a sign-in.</string>
 	<key>NSSpeechRecognitionUsageDescription</key>

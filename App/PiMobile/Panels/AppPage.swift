@@ -9,8 +9,10 @@ import WebKit
 /// Besides the panel bridge (`pi.post`, `pi.onMessage`, `pi.close`, `pi.prompt`), the page has `pi.state` (get, set,
 /// onChange: saved with the app, and the state it opens with after a relaunch) and `pi.minimize()`.
 @MainActor
-final class AppPage: NSObject, WKScriptMessageHandler, WKNavigationDelegate {
+final class AppPage: NSObject, WKScriptMessageHandler, WKNavigationDelegate, WKUIDelegate {
     let webView: WKWebView
+    /// The extension whose app it is: what it may use (`ExtensionPermissions`) is asked for it.
+    let extensionName: String
     /// The page's messages for the engine (`message`, `state`, `close`), and `minimize` and `prompt` for the app.
     var onEvent: ([String: Any]) -> Void = { _ in }
     /// The page has loaded (the first time can take a moment while WebKit starts a process for it).
@@ -21,10 +23,12 @@ final class AppPage: NSObject, WKScriptMessageHandler, WKNavigationDelegate {
     /// Messages for a page still loading.
     private var pending: [String] = []
 
-    init(html: String, state: String) {
+    init(html: String, state: String, extensionName: String) {
         self.state = state
+        self.extensionName = extensionName
         let configuration = WKWebViewConfiguration()
         configuration.websiteDataStore = .nonPersistent()
+        configuration.allowsInlineMediaPlayback = true
         webView = WKWebView(frame: CGRect(x: 0, y: 0, width: 390, height: 600), configuration: configuration)
         super.init()
         configuration.userContentController.add(WeakAppPageHandler(self), name: "pi")
@@ -32,6 +36,7 @@ final class AppPage: NSObject, WKScriptMessageHandler, WKNavigationDelegate {
         webView.backgroundColor = .clear
         webView.scrollView.backgroundColor = .clear
         webView.navigationDelegate = self
+        webView.uiDelegate = self
         load(html)
         Self.park(webView)
     }
@@ -45,7 +50,7 @@ final class AppPage: NSObject, WKScriptMessageHandler, WKNavigationDelegate {
         controller.addUserScript(WKUserScript(source: PanelWebView.bridge, injectionTime: .atDocumentStart, forMainFrameOnly: true))
         controller.addUserScript(WKUserScript(source: Self.appBridge(state: state), injectionTime: .atDocumentStart, forMainFrameOnly: true))
         webView.loadHTMLString(html.range(of: "name=\"viewport\"") != nil ? html
-            : "<meta name=\"viewport\" content=\"width=device-width, initial-scale=1\">" + html, baseURL: nil)
+            : "<meta name=\"viewport\" content=\"width=device-width, initial-scale=1\">" + html, baseURL: PageCapabilities.baseURL(for: extensionName))
     }
 
     /// A message from the extension (`app.post`), as JSON.
@@ -84,11 +89,18 @@ final class AppPage: NSObject, WKScriptMessageHandler, WKNavigationDelegate {
 
     func userContentController(_ controller: WKUserContentController, didReceive message: WKScriptMessage) {
         guard let body = message.body as? [String: Any], let type = body["type"] as? String, type != "height" else { return }
+        if PageCapabilities.handle(body, from: extensionName, in: webView) { return }
         if type == "state", let value = body["value"],
            let data = try? JSONSerialization.data(withJSONObject: value, options: .fragmentsAllowed) {
             state = String(decoding: data, as: UTF8.self)
         }
         onEvent(body)
+    }
+
+    /// The camera and microphone (getUserMedia), once the user allows this extension.
+    func webView(_ webView: WKWebView, decideMediaCapturePermissionsFor origin: WKSecurityOrigin, initiatedBy frame: WKFrameInfo,
+                 type: WKMediaCaptureType) async -> WKPermissionDecision {
+        await PageCapabilities.mediaDecision(type, for: extensionName)
     }
 
     // MARK: - Parking

@@ -10,7 +10,7 @@ struct PanelSheet: View {
 
     var body: some View {
         NavigationStack {
-            PanelWebView(content: panel.content, messages: panel.messages, scrolls: true, onEvent: onEvent)
+            PanelWebView(content: panel.content, extensionName: panel.extensionName, messages: panel.messages, scrolls: true, onEvent: onEvent)
                 .ignoresSafeArea(.container, edges: .bottom)
                 .background(background)
                 .navigationBarTitleDisplayMode(.inline)
@@ -42,7 +42,7 @@ struct PanelWidget: View {
     private let maxHeight: CGFloat = 220
 
     var body: some View {
-        PanelWebView(content: panel.content, messages: panel.messages, scrolls: height > maxHeight, compact: true,
+        PanelWebView(content: panel.content, extensionName: panel.extensionName, messages: panel.messages, scrolls: height > maxHeight, compact: true,
                      onEvent: onEvent, onHeight: { height = $0 })
             .frame(height: min(max(height, 1), maxHeight))
     }
