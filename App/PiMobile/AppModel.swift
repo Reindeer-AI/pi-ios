@@ -777,7 +777,7 @@ final class AppModel {
     }
 
     /// The endpoint's models from `GET /models` (OpenAI's list), with the limits a gateway reports (`context_length`,
-    /// `max_output_tokens`, and a `name`, as OpenRouter-style gateways such as Bifrost do); none, with the reason logged,
+    /// `max_output_tokens`, and a `name`, as OpenRouter-style gateways do); none, with the reason logged,
     /// when that fails. Without limits, a model gets a 32K window and 16K tokens per reply; replies are capped at 32K
     /// tokens (a 4K cap cut long edits short, and the run ended without a word).
     private static func discoverModels(at base: URL) async -> [[String: Any]] {

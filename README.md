@@ -71,3 +71,7 @@ them.
 ## License
 
 MIT, © Reindeer AI. Third-party components and their licenses: [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md).
+
+## Privacy
+
+pi collects nothing: [PRIVACY.md](PRIVACY.md), the app's privacy policy.
