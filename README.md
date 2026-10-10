@@ -1,7 +1,12 @@
 # pi for iOS
 
-pi, the coding agent, on iPhone and iPad. Each session is its own agent with its own workspace on the device: a shell,
-Python, git, a browser, extensions and their apps, and on-device models, with any model provider you sign in to.
+**An iOS app that wraps [pi](https://pi.dev), the coding agent by [Earendil Works](https://github.com/earendil-works).**
+It runs pi's own npm packages on iPhone and iPad: [`pi-coding-agent`](https://www.npmjs.com/package/@earendil-works/pi-coding-agent), [`pi-ai`](https://www.npmjs.com/package/@earendil-works/pi-ai), [`pi-durable`](https://www.npmjs.com/package/@earendil-works/pi-durable),
+[`pi-tui`](https://www.npmjs.com/package/@earendil-works/pi-tui), [`pi-mcp`](https://www.npmjs.com/package/@earendil-works/pi-mcp) and [`chord`](https://www.npmjs.com/package/@earendil-works/chord) (source: [earendil-works/pi](https://github.com/earendil-works/pi)).
+pi and its packages are Earendil Works'; this app is an independent project by Reindeer AI.
+
+Each session is its own pi agent with its own workspace on the device: a shell, Python, git, a browser, extensions and
+their apps, and on-device models, with any model provider you sign in to.
 
 ## What it does
 
@@ -22,7 +27,7 @@ Python, git, a browser, extensions and their apps, and on-device models, with an
 
 ## How it works
 
-The agent is [pi](https://github.com/badlogic/pi-mono)'s, running on its durable harness (`@earendil-works/pi-durable`)
+The agent is [pi](https://github.com/earendil-works/pi)'s, running on its durable harness (`@earendil-works/pi-durable`)
 inside a hidden WKWebView (`engine/`). The app (`App/`, SwiftUI) and its native services (`PiEngineKit/`) give the engine
 what a browser page can't have: the shell ([a-Shell](https://github.com/holzschu/a-shell)'s `ios_system` and a patched
 dash), CPython ([BeeWare's Python-Apple-support](https://github.com/beeware/Python-Apple-support)), SQLite for the

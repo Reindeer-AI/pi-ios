@@ -6,7 +6,7 @@ when a dependency changes).
 
 | Component | Use | License |
 | --- | --- | --- |
-| [pi](https://github.com/badlogic/pi-mono) (`@earendil-works/pi-ai`, `pi-coding-agent`, `pi-tui`, `pi-mcp`), `pi-durable`, `chord` | the agent and its harness | MIT |
+| [pi](https://github.com/earendil-works/pi) by Earendil Works (`@earendil-works/pi-ai`, `pi-coding-agent`, `pi-tui`, `pi-mcp`), `pi-durable`, `chord` | the agent and its harness | MIT |
 | [a-Shell](https://github.com/holzschu/a-shell) and [ios_system](https://github.com/holzschu/ios_system) | the shell's commands | BSD 3-Clause |
 | [dash for iOS](https://github.com/holzschu/dash_iOS) (patched, `Vendor/patches`) | the shell | BSD 3-Clause |
 | [curl](https://curl.se) (`curl_ios`) | the shell's `curl` | curl (MIT-style) |

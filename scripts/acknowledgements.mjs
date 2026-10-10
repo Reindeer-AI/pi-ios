@@ -76,7 +76,7 @@ for (const pin of resolved.pins) {
 
 const engine = join(root, "engine");
 const bundled = JSON.parse(readFileSync(join(engine, "dist/bundled-packages.json"), "utf8"));
-const piLicense = await fetchText("https://raw.githubusercontent.com/badlogic/pi-mono/main/LICENSE");
+const piLicense = await fetchText("https://raw.githubusercontent.com/earendil-works/pi/main/LICENSE");
 const npm = new Map();
 for (const folder of bundled) {
 	const manifest = JSON.parse(readFileSync(join(engine, folder, "package.json"), "utf8"));
