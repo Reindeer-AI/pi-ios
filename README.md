@@ -73,6 +73,9 @@ compaction). Most of them talk to a model: set one up in the simulator's pi firs
 Issues and pull requests are welcome. Keep changes small and focused, match the surrounding code, and say how you tested
 them.
 
+While this repo is mostly clanker slop, contributions from clankers are not welcome, and will get you blocked if they're
+slop.
+
 ## License
 
 MIT, © Reindeer AI. Third-party components and their licenses: [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md).
