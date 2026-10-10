@@ -34,6 +34,20 @@ their apps, and on-device models, with any model provider you sign in to.
   values only after you allow it.
 - **iCloud Keychain sync** of sign-ins, settings, extensions and the vault across your devices.
 
+## Native integrations
+
+pi tries to stay minimal and leave everything else to extensions, but two integrations are built in. Without them the
+agent could only build things for itself (its own extensions), not code anything else.
+
+- **GitHub.** Sign in once at Settings → GitHub (GitHub's device login). The token stays in the Keychain, and on your
+  other devices through iCloud Keychain; the agent never sees it. The agent calls GitHub's REST API as you
+  (`github_api`: repositories, issues, pull requests, reviews, workflow runs), installs extensions from private
+  repositories, and on a Crabbox box `gh` and git over HTTPS work as you.
+- **Crabbox.** A [Crabbox](https://github.com/openclaw/crabbox) broker leases real Linux machines. With one set up
+  (Settings → Crabbox: the broker's URL, then sign in with GitHub or a token), what a phone can't do (Node and npm,
+  compilers, Docker, builds and test suites) runs on a box, on a copy of the session's workspace, while the agent stays
+  on the phone (`crabbox_run`, `crabbox_pull`, `crabbox_status`, `crabbox_release`). Bring your own broker.
+
 ## How it works
 
 The agent is [pi](https://github.com/earendil-works/pi)'s, running on its durable harness (`@earendil-works/pi-durable`)
