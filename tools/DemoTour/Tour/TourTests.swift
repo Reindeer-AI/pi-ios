@@ -1492,6 +1492,39 @@ final class TourTests: XCTestCase {
         pause(1)
     }
 
+    /// Python's compiled modules, each a framework of its own (renamed for the App Store by the embed script), import in
+    /// pi's shell: a `!` command, no model. Escaped, not quoted (the keyboard may make quotes curly).
+    func testPythonModules() throws {
+        executionTimeAllowance = 3 * 60
+        launchReady()
+        tap(pi.buttons["New session"].firstMatch)
+        pause(1.5)
+        let message = pi.textFields["Message pi"]
+        tap(message)
+        message.typeText("!python3 -c import\\ asyncio,ctypes,hashlib,sqlite3,ssl,compression.zstd\\;print\\(37\\*41\\)")
+        tap(pi.buttons["Send"].firstMatch)
+        let row = pi.staticTexts.matching(NSPredicate(format: "label BEGINSWITH %@", "python3 -c")).firstMatch
+        XCTAssertTrue(row.waitForExistence(timeout: 20), "the command's row")
+        if pi.buttons["Hide keyboard"].exists { pi.buttons["Hide keyboard"].tap() }
+        // The row is collapsed: its output is read through Select Text, once the command has finished.
+        var value = ""
+        let end = Date().addingTimeInterval(60)
+        while Date() < end {
+            pause(3)
+            row.press(forDuration: 1.0)
+            tap(pi.buttons["Select Text"].firstMatch)
+            let text = pi.textViews.firstMatch
+            XCTAssertTrue(text.waitForExistence(timeout: 5), "the Select Text sheet")
+            value = text.value as? String ?? ""
+            tap(pi.buttons["Done"].firstMatch)
+            if value.contains("1517") || value.contains("Error") { break }
+        }
+        print("python: \(value)")
+        // 37 × 41: in the output only, not in the command.
+        XCTAssertTrue(value.contains("1517"), "the modules imported")
+        pause(1)
+    }
+
     /// Settings → About → Acknowledgements: every component's license, searchable, each with its full text.
     func testAcknowledgements() throws {
         launchReady()

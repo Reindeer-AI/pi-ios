@@ -47,6 +47,19 @@ for name in files text shell awk curl_ios tar dash lg2 openssl libssh2; do
   for arch in $(lipo -archs "$binary"); do
     case " $ARCHS " in *" $arch "*) ;; *) lipo -remove "$arch" "$binary" -output "$binary" ;; esac
   done
+  # libssh2 also carries bitcode, and an unfilled MinimumOSVersion ("ios_version_min"): both refused by App Store
+  # validation. The bitcode goes, and the version becomes the binary's own (its build version's minos).
+  if otool -l "$binary" | grep -q __LLVM; then
+    xcrun bitcode_strip -r "$binary" -o "$binary"
+  fi
+  case "$(/usr/libexec/PlistBuddy -c "Print :MinimumOSVersion" "$plist" 2>/dev/null)" in
+    [0-9]*) ;;
+    *)
+      minos="$(otool -l "$binary" | awk '/LC_BUILD_VERSION/ {found=1} found && $1 == "minos" {print $2; exit}')"
+      /usr/libexec/PlistBuddy -c "Delete :MinimumOSVersion" "$plist" 2>/dev/null || true
+      /usr/libexec/PlistBuddy -c "Add :MinimumOSVersion string ${minos:-14.0}" "$plist"
+      ;;
+  esac
   codesign --force --sign "${EXPANDED_CODE_SIGN_IDENTITY:--}" --timestamp=none "$FRAMEWORKS/$name.framework"
 done
 
@@ -69,6 +82,28 @@ EXPANDED_CODE_SIGN_IDENTITY="${EXPANDED_CODE_SIGN_IDENTITY:--}"
 EXPANDED_CODE_SIGN_IDENTITY_NAME="${EXPANDED_CODE_SIGN_IDENTITY_NAME:-ad hoc}"
 . "$PROJECT_DIR/$PYTHON_XCFRAMEWORK/build/utils.sh"
 install_python "$PYTHON_XCFRAMEWORK" > /dev/null
+# Two things in the helper's module frameworks would make App Store Connect take one of them for the app: they say they
+# are apps (CFBundlePackageType APPL), and a module's leading underscore becomes a leading hyphen in its identifier
+# ("<app>.-asyncio"). They become frameworks (FMWK) named <app>.py-<module>, signed again.
+for framework in "$FRAMEWORKS"/*.framework; do
+  plist="$framework/Info.plist"
+  id="$(/usr/libexec/PlistBuddy -c "Print :CFBundleIdentifier" "$plist" 2>/dev/null)" || continue
+  type="$(/usr/libexec/PlistBuddy -c "Print :CFBundlePackageType" "$plist" 2>/dev/null || true)"
+  changed=""
+  case "$id" in
+    "$PRODUCT_BUNDLE_IDENTIFIER".-*)
+      /usr/libexec/PlistBuddy -c "Set :CFBundleIdentifier $PRODUCT_BUNDLE_IDENTIFIER.py${id#"$PRODUCT_BUNDLE_IDENTIFIER".}" "$plist"
+      changed=1
+      ;;
+  esac
+  if [ "$type" = "APPL" ]; then
+    /usr/libexec/PlistBuddy -c "Set :CFBundlePackageType FMWK" "$plist"
+    changed=1
+  fi
+  if [ -n "$changed" ]; then
+    /usr/bin/codesign --force --sign "$EXPANDED_CODE_SIGN_IDENTITY" ${OTHER_CODE_SIGN_FLAGS:-} -o runtime --timestamp=none --generate-entitlement-der "$framework"
+  fi
+done
 cp "$PROJECT_DIR/../Vendor/python-support/sitecustomize.py" "$CODESIGNING_FOLDER_PATH/python/lib/python3.14/"
 
 cp "$VENDOR/commandDictionary.plist" "$RESOURCES/commandDictionary.plist"
