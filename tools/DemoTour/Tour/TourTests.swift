@@ -483,8 +483,6 @@ final class TourTests: XCTestCase {
         pause(3)
     }
 
-    /// The Gmail widget's buttons: the agent fills it with made-up messages (no browser), then Low signal → Archive all
-    /// must send the request to the agent, and Reply must put a draft request in the message box.
     /// Session apps, with the Flights app (extensions/flights.ts, installed): /flights opens it; Minimize puts it in the
     /// session's dock with its page still running (what was typed is there when it opens again), and so does swiping the
     /// sheet away; after a relaunch the dock still has it, and it opens with the edit it kept (pi.state); the agent opens
@@ -592,8 +590,8 @@ final class TourTests: XCTestCase {
 
     /// The session apps demo, paced for a recording (prints "MARK name epoch" lines to cut it by): /flights opens the
     /// Flights app, set to Tokyo in business, which minimizes to the dock while the chat goes on and opens again as it
-    /// was; a sample triage puts Gmail in the dock with a badge; after a relaunch both are there and Flights still has its
-    /// unsaved edit, which is saved; the agent opens the app; holding its dock entry closes it.
+    /// was; after a relaunch Flights is still in the dock with its unsaved edit, which is saved; the agent opens the app;
+    /// holding its dock entry closes it.
     func testAppsDemo() throws {
         executionTimeAllowance = 25 * 60
         func mark(_ name: String) { print("MARK \(name) \(Date().timeIntervalSince1970)") }
@@ -614,7 +612,6 @@ final class TourTests: XCTestCase {
         }
         let minimize = pi.buttons["Minimize"].firstMatch
         let flights = pi.buttons.matching(NSPredicate(format: "label BEGINSWITH %@", "Flights. Open app")).firstMatch
-        let gmail = pi.buttons.matching(NSPredicate(format: "label BEGINSWITH %@", "Gmail")).firstMatch
 
         launchReady()
         mark("start")
@@ -646,19 +643,6 @@ final class TourTests: XCTestCase {
         mark("reopen")
         tap(flights)
         pause(4)
-        tap(minimize)
-        pause(2)
-
-        mark("gmail")
-        send("Demo with sample data, don't use the browser: call gmail_triage once with accounts [dana@example.com], account dana@example.com, reviewed 24, and made-up messages: 2 requiring attention (Lee Park: contract signature needed; Google: security alert), 1 calendar invite (Design review, Thursday 10:00), 21 low signal (newsletters and receipts). Then just say done.")
-        if hide.waitForExistence(timeout: 2) { hide.tap() }
-        waitForRun()
-        mark("gmail-docked")
-        pause(3)
-        tap(gmail)
-        pause(3)
-        tap(pi.buttons.matching(NSPredicate(format: "label CONTAINS %@", "Invites")).firstMatch)
-        pause(2.5)
         tap(minimize)
         pause(2)
 
@@ -697,36 +681,6 @@ final class TourTests: XCTestCase {
         mark("end")
     }
 
-    /// The Gmail scene of the apps demo, recorded on its own: a sample triage puts Gmail in the dock; it opens, shows its
-    /// invites, and minimizes.
-    func testAppsDemoGmail() throws {
-        executionTimeAllowance = 10 * 60
-        func mark(_ name: String) { print("MARK \(name) \(Date().timeIntervalSince1970)") }
-        let stop = pi.buttons["Stop"].firstMatch
-        let minimize = pi.buttons["Minimize"].firstMatch
-        launchReady()
-        tap(pi.buttons["New session"].firstMatch)
-        pause(1.5)
-        let field = pi.textFields["Message pi"]
-        tap(field)
-        field.typeText("Demo with sample data, don't use the browser: call gmail_triage once with accounts [dana@example.com], account dana@example.com, reviewed 24, and made-up messages: 2 requiring attention (Lee Park: contract signature needed; Google: security alert), 1 calendar invite (Design review, Thursday 10:00), 21 low signal (newsletters and receipts). Then just say done.")
-        tap(pi.buttons["Send"].firstMatch)
-        if pi.buttons["Hide keyboard"].firstMatch.waitForExistence(timeout: 2) { pi.buttons["Hide keyboard"].firstMatch.tap() }
-        _ = stop.waitForExistence(timeout: 20)
-        let end = Date().addingTimeInterval(4 * 60)
-        while stop.exists && Date() < end { pause(1) }
-        pause(2)
-        mark("open")
-        tap(pi.buttons.matching(NSPredicate(format: "label BEGINSWITH %@", "Gmail")).firstMatch)
-        pause(3.5)
-        mark("invites")
-        tap(pi.buttons.matching(NSPredicate(format: "label CONTAINS %@", "Invites")).firstMatch)
-        pause(3)
-        mark("minimize")
-        tap(minimize)
-        pause(2)
-        mark("end")
-    }
 
     /// Opening a shared extension (a .piext file, opened from outside while this waits, as AirDrop would): the sheet says
     /// what it is and what it brings, and adds it for every session.
@@ -1793,70 +1747,12 @@ final class TourTests: XCTestCase {
         XCTAssertFalse(dock.exists, "off the dock")
     }
 
-    func testGmailWidget() throws {
-        executionTimeAllowance = 10 * 60
-        launchReady()
-        tap(pi.buttons["New session"].firstMatch)
-        pause(1.5)
-        let hide = pi.buttons["Hide keyboard"].firstMatch
-        let stop = pi.buttons["Stop"].firstMatch
-        let field = pi.textFields["Message pi"]
-        tap(field)
-        field.typeText("Widget test, don't use the browser: call gmail_triage once with accounts [you@example.com], account you@example.com, reviewed 20, and made-up messages: 2 requiring attention, 1 calendar invite, 17 low signal. Then just say done.")
-        tap(pi.buttons["Send"].firstMatch)
-        if hide.waitForExistence(timeout: 2) { hide.tap() }
-        _ = stop.waitForExistence(timeout: 20)
-        let end = Date().addingTimeInterval(4 * 60)
-        while stop.exists && Date() < end { pause(1) }
-        pause(2)
 
-        // The triage put the Gmail app in the dock, badged with what requires attention.
-        let dock = pi.buttons.matching(NSPredicate(format: "label BEGINSWITH %@", "Gmail")).firstMatch
-        XCTAssertTrue(dock.waitForExistence(timeout: 10), "Gmail in the dock")
-        print("dock: \(dock.label)")
-        tap(dock)
-        pause(2)
-        tap(pi.buttons.matching(NSPredicate(format: "label CONTAINS %@", "Low signal")).firstMatch)
-        pause(1.5)
-        tap(pi.buttons.matching(NSPredicate(format: "label BEGINSWITH %@", "Archive all")).firstMatch)
-        pause(1)
-        // The request shows in the session, under the app.
-        tap(pi.buttons["Minimize"].firstMatch)
-        let request = pi.staticTexts.matching(NSPredicate(format: "label CONTAINS %@", "low-signal messages")).firstMatch
-        XCTAssertTrue(request.waitForExistence(timeout: 15), "Archive all sent a request")
-        pause(3)
-        if stop.exists { tap(stop) }
-        pause(3)
-
-        tap(dock)
-        pause(2)
-        tap(pi.buttons.matching(NSPredicate(format: "label CONTAINS %@", "Attention")).firstMatch)
-        pause(1.5)
-        tap(pi.buttons.matching(NSPredicate(format: "label BEGINSWITH %@", "Reply to")).firstMatch)
-        pause(1.5)
-        // With text in it, the message box is a text view.
-        let box = pi.textViews.firstMatch.exists ? pi.textViews.firstMatch : pi.textFields.firstMatch
-        let draft = (box.value as? String) ?? ""
-        XCTAssertTrue(draft.hasPrefix("Draft a reply to"), "Reply filled the message box: \(draft)")
-        pause(2)
-    }
-
-    /// The message box with the keyboard up: in an empty session (no gap above it), then with a widget (/gmail's) in its
-    /// short strip. For looking at the recording.
+    /// The message box with the keyboard up in an empty session (no gap above it). For looking at the recording.
     func testComposerKeyboard() throws {
         launchReady()
         tap(pi.buttons["New session"].firstMatch)
         pause(1.5)
-        let field = pi.textFields["Message pi"]
-        tap(field)
-        pause(3)
-        field.typeText("/gmail")
-        pause(1)
-        tap(pi.buttons["Send"].firstMatch)
-        pause(4)
-        let stop = pi.buttons["Stop"].firstMatch
-        if stop.exists { tap(stop) }
-        pause(3)
         tap(pi.textFields["Message pi"])
         pause(3)
         let hide = pi.buttons["Hide keyboard"].firstMatch

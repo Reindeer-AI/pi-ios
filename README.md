@@ -47,7 +47,7 @@ App/            the iOS app (SwiftUI): sessions, settings, the browser, apps, th
 PiEngineKit/    native services the engine calls: shell, files, SQLite, network proxy, Keychain, vault, MCP, GitHub
 engine/         the agent: pi's packages bundled for WebKit, with the app's tools, extension runtime and commands
 Vendor/         scripts that fetch or build the native components (a-Shell's commands, dash, CPython, llama.cpp)
-extensions/     example extensions (with apps): flights, gmail, personal details
+extensions/     example extensions (with apps): flights, personal details
 tools/          UI tests (DemoTour) and small test servers
 scripts/        build-ipa.sh: a signed .ipa
 ```
