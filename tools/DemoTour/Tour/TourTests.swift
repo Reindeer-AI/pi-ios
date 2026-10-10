@@ -962,13 +962,15 @@ final class TourTests: XCTestCase {
         pause(1)
     }
 
-    /// Shortcuts: a shortcut with pi's Ask pi action (a new session) runs, opens pi on the session, and returns the reply.
+    /// Shortcuts: a shortcut with pi's Ask pi action (a new session) runs with pi not running: pi starts in the background,
+    /// never comes to the front, and the reply comes back to Shortcuts.
     func testShortcut() throws {
         executionTimeAllowance = 10 * 60
         let shortcuts = XCUIApplication(bundleIdentifier: "com.apple.shortcuts")
         let springboard = XCUIApplication(bundleIdentifier: "com.apple.springboard")
         // A prompt an earlier run left up.
         dismissShortcutLeftovers(springboard, shortcuts)
+        pi.terminate()
         shortcuts.terminate()
         shortcuts.launch()
         pause(3)
@@ -990,14 +992,13 @@ final class TourTests: XCTestCase {
         }
         field.typeText("Reply with exactly the word pong, in lowercase, and nothing else.")
         [shortcuts, springboard].map { $0.buttons["Done"].firstMatch }.first { $0.exists }?.tap()
-        XCTAssertTrue(pi.wait(for: .runningForeground, timeout: 30), "pi opens")
-        let prompt = pi.staticTexts.matching(NSPredicate(format: "label CONTAINS %@", "Reply with exactly the word pong")).firstMatch
-        XCTAssertTrue(prompt.waitForExistence(timeout: 30), "pi shows the new session with the message")
-        // The reply comes back to Shortcuts, which shows it (the action's dialog).
+        // The reply comes back to Shortcuts, which shows it (the action's dialog), while pi stays in the background.
         let reply = NSPredicate(format: "label ==[c] %@", "pong")
         let end = Date().addingTimeInterval(180)
         var shown: XCUIElement?
+        var cameForward = false
         while shown == nil && Date() < end {
+            if pi.state == .runningForeground { cameForward = true }
             for app in [springboard, shortcuts] {
                 let match = app.staticTexts.matching(reply).firstMatch
                 if match.exists { shown = match; print("shortcut reply shown by \(app == springboard ? "springboard" : "shortcuts")") }
@@ -1006,6 +1007,8 @@ final class TourTests: XCTestCase {
         }
         print("SHORTCUTS 3 (springboard):\n\(springboard.debugDescription)")
         XCTAssertNotNil(shown, "the reply shown by Shortcuts")
+        print("pi state after the shortcut: \(pi.state.rawValue)")
+        XCTAssertFalse(cameForward, "pi stayed in the background")
         pause(2)
         dismissShortcutLeftovers(springboard, shortcuts)
     }
@@ -1051,11 +1054,6 @@ final class TourTests: XCTestCase {
         guard let field else { return XCTFail("Shortcuts asks for the message") }
         field.typeText("Now reply with exactly the word ping, in lowercase, and nothing else.")
         [shortcuts, springboard].map { $0.buttons["Done"].firstMatch }.first { $0.exists }?.tap()
-        XCTAssertTrue(pi.wait(for: .runningForeground, timeout: 30), "pi opens")
-        let followUp = pi.staticTexts.matching(NSPredicate(format: "label CONTAINS %@", "Now reply with exactly the word ping")).firstMatch
-        XCTAssertTrue(followUp.waitForExistence(timeout: 30), "pi shows the chosen session with the message")
-        XCTAssertTrue(pi.staticTexts.matching(NSPredicate(format: "label CONTAINS %@", "Reply with exactly the word pong")).firstMatch.exists,
-                      "the same session: its earlier message is there")
         let reply = NSPredicate(format: "label ==[c] %@", "ping")
         let end = Date().addingTimeInterval(180)
         var shown = false
@@ -1069,9 +1067,68 @@ final class TourTests: XCTestCase {
         XCTAssertTrue(shown, "the reply shown by Shortcuts")
         pause(2)
         dismissShortcutLeftovers(springboard, shortcuts)
+        // In pi, the chosen session has both messages.
+        pi.activate()
+        backToSessions()
+        tap(pi.buttons.matching(NSPredicate(format: "label BEGINSWITH %@", "Reply with exactly the word pong")).firstMatch)
+        let followUp = pi.staticTexts.matching(NSPredicate(format: "label CONTAINS %@", "Now reply with exactly the word ping")).firstMatch
+        XCTAssertTrue(followUp.waitForExistence(timeout: 30), "the chosen session has the second message")
+        pause(2)
     }
 
-    /// Shortcuts: Start pi Session opens pi on a new, empty session.
+    /// Shortcuts: Ask pi with a request that outlasts the background time (20 seconds) asks to continue in pi, which then
+    /// opens on that session, and the reply still comes back.
+    func testShortcutLong() throws {
+        executionTimeAllowance = 10 * 60
+        let shortcuts = XCUIApplication(bundleIdentifier: "com.apple.shortcuts")
+        let springboard = XCUIApplication(bundleIdentifier: "com.apple.springboard")
+        dismissShortcutLeftovers(springboard, shortcuts)
+        shortcuts.terminate()
+        shortcuts.launch()
+        pause(3)
+        deleteTestShortcuts(shortcuts)
+        let ask = shortcuts.buttons["bubble.left.and.text.bubble.right"].firstMatch
+        XCTAssertTrue(ask.waitForExistence(timeout: 10), "pi's actions in the Shortcuts library")
+        ask.tap()
+        var field: XCUIElement?
+        let asked = Date().addingTimeInterval(15)
+        while field == nil && Date() < asked {
+            field = [shortcuts, springboard].map { $0.textViews.firstMatch }.first { $0.exists }
+            if field == nil { pause(0.5) }
+        }
+        guard let field else { return XCTFail("Shortcuts asks for the message") }
+        field.typeText("Run sleep 30 in bash, then reply with exactly the word slept, in lowercase, and nothing else.")
+        [shortcuts, springboard].map { $0.buttons["Done"].firstMatch }.first { $0.exists }?.tap()
+        // After the background time: the system's question (or, without one, pi itself).
+        let end = Date().addingTimeInterval(90)
+        var confirmed = false
+        while pi.state != .runningForeground && Date() < end {
+            for app in [springboard, shortcuts] {
+                if let button = ["Continue", "Open", "Open pi", "Yes"].map({ app.buttons[$0].firstMatch }).first(where: \.exists) {
+                    print("continue in pi: \(app == springboard ? "springboard" : "shortcuts") asks, \(button.label)")
+                    button.tap()
+                    confirmed = true
+                }
+            }
+            pause(1)
+        }
+        print("asked to continue: \(confirmed)")
+        XCTAssertTrue(pi.wait(for: .runningForeground, timeout: 10), "pi opens to finish")
+        let prompt = pi.staticTexts.matching(NSPredicate(format: "label CONTAINS %@", "Run sleep 30 in bash")).firstMatch
+        XCTAssertTrue(prompt.waitForExistence(timeout: 20), "on the shortcut's session")
+        let reply = NSPredicate(format: "label ==[c] %@", "slept")
+        let replied = Date().addingTimeInterval(180)
+        var shown = false
+        while !shown && Date() < replied {
+            for app in [springboard, shortcuts] where app.staticTexts.matching(reply).firstMatch.exists { shown = true }
+            if !shown { pause(1) }
+        }
+        XCTAssertTrue(shown, "the reply shown by Shortcuts")
+        pause(2)
+        dismissShortcutLeftovers(springboard, shortcuts)
+    }
+
+    /// Shortcuts: Start pi Session makes a new, empty session, in the background.
     func testShortcutStart() throws {
         let shortcuts = XCUIApplication(bundleIdentifier: "com.apple.shortcuts")
         let springboard = XCUIApplication(bundleIdentifier: "com.apple.springboard")
@@ -1084,10 +1141,21 @@ final class TourTests: XCTestCase {
             print("START 1:\n\(shortcuts.debugDescription)")
             return XCTFail("pi's Start Session in the Shortcuts library")
         }
+        let before = Date()
         start.tap()
-        XCTAssertTrue(pi.wait(for: .runningForeground, timeout: 30), "pi opens")
-        XCTAssertTrue(pi.textFields["Message pi"].waitForExistence(timeout: 20), "on a session")
-        XCTAssertTrue(pi.staticTexts["New session"].firstMatch.waitForExistence(timeout: 5), "a new one")
+        // The shortcut ends (Shortcuts shows its result) without pi coming to the front.
+        var cameForward = false
+        while Date().timeIntervalSince(before) < 20 {
+            if pi.state == .runningForeground { cameForward = true }
+            pause(1)
+        }
+        XCTAssertFalse(cameForward, "pi stayed in the background")
+        pi.activate()
+        backToSessions()
+        let newest = pi.buttons.matching(NSPredicate(format: "label BEGINSWITH %@", "New session, ")).firstMatch
+        XCTAssertTrue(newest.waitForExistence(timeout: 20), "the new session in pi's list")
+        print("newest session: \(newest.label)")
+        XCTAssertTrue(newest.label.contains("now") || newest.label.contains("second") || newest.label.contains("1 minute"), "made just now")
         pause(2)
     }
 
@@ -1924,6 +1992,15 @@ final class TourTests: XCTestCase {
 
     /// Launches pi and waits until it is ready: its engine started and sessions loaded ("New session" enabled), which
     /// takes longer on the first launch after an update.
+    /// From a session (pi may reopen on the last one shown) back to the sessions list.
+    private func backToSessions() {
+        pause(1.5)
+        for _ in 0..<3 where !pi.buttons["New session"].isHittable && pi.navigationBars.buttons.element(boundBy: 0).exists {
+            pi.navigationBars.buttons.element(boundBy: 0).tap()
+            pause(1)
+        }
+    }
+
     private func launchReady() {
         pi.launch()
         let newSession = pi.buttons["New session"].firstMatch

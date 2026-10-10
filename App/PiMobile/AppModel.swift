@@ -1164,9 +1164,13 @@ final class AppModel {
         return result?["submissionId"] as? Int
     }
 
-    /// A shortcut's message: sent to a session (a new one when none is given), which pi shows, and the agent's reply
-    /// once its run is done. A session already working gets it when it's done.
-    func ask(_ text: String, in sessionId: Int?) async throws -> String {
+    /// The session of the last Ask pi, to show if its shortcut continues in pi.
+    private(set) var askedSession: Int?
+
+    /// A shortcut's message: sent to a session (a new one when none is given), and the agent's reply once its run is
+    /// done. A session already working gets it when it's done. `show`: pi opens that session (the shortcut runs in pi,
+    /// not in the background).
+    func ask(_ text: String, in sessionId: Int?, show: Bool = true) async throws -> String {
         await start()
         guard phase == .ready else { throw AppError.message("pi couldn't start: \(String(describing: phase))") }
         let id: Int
@@ -1176,8 +1180,9 @@ final class AppModel {
         } else {
             id = try await createSession()
         }
-        requestedSession = id
-        log("shortcut", "[\(id)] ask")
+        askedSession = id
+        if show { requestedSession = id }
+        log("shortcut", "[\(id)] ask\(show ? "" : " (in the background)")")
         guard let submission = try await submit(text, to: id, delivery: .followUp) else { return "" }
         let reply = try await engine.command("session.reply", ["id": id, "submissionId": submission]) as? [String: Any] ?? [:]
         let status = reply["status"] as? String ?? "done"
@@ -1190,12 +1195,12 @@ final class AppModel {
     }
 
     /// A new session for a shortcut (to send it messages later), which pi shows.
-    func startSession(title: String?) async throws -> Session {
+    func startSession(title: String?, show: Bool = true) async throws -> Session {
         await start()
         guard phase == .ready else { throw AppError.message("pi couldn't start: \(String(describing: phase))") }
         let id = try await createSession()
         if let title, !title.isEmpty { await rename(id, to: title) }
-        requestedSession = id
+        if show { requestedSession = id }
         guard var session = sessions.first(where: { $0.id == id }) else { throw AppError.message("The session wasn't created.") }
         if let title, !title.isEmpty { session.title = title }
         return session

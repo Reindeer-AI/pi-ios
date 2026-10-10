@@ -1,7 +1,8 @@
 import AppIntents
 
 // Shortcuts' actions: send pi a message (in a new session or one chosen) and get its reply, and start a session to send
-// messages to later. They open pi, which shows the session while the agent works.
+// messages to later. They run without opening pi; a request the agent is still on after a while asks to continue in
+// pi, since iOS gives a shortcut little time in the background.
 
 struct AskPiIntent: AppIntent {
     static let title: LocalizedStringResource = "Ask pi"
@@ -9,7 +10,10 @@ struct AskPiIntent: AppIntent {
         "Sends a message to pi, in a new session or one you choose, and gives back pi's reply once the agent is done.",
         categoryName: "Sessions"
     )
-    static let openAppWhenRun = true
+    /// In the background for a short question; in pi (asked for, `continueInForeground`) for a long one.
+    static let supportedModes: IntentModes = [.background, .foreground(.dynamic)]
+    /// How long a request runs in the background before pi asks to continue in the foreground.
+    static let backgroundTime: Duration = .seconds(20)
 
     @Parameter(title: "Message", inputOptions: String.IntentInputOptions(multiline: true))
     var message: String
@@ -25,8 +29,36 @@ struct AskPiIntent: AppIntent {
     @MainActor
     func perform() async throws -> some IntentResult & ReturnsValue<String> & ProvidesDialog {
         guard let app = AppModel.shared else { throw AppError.message("pi isn't running.") }
-        let reply = try await app.ask(message, in: session?.id)
+        let message = message, sessionId = session?.id
+        let background = systemContext.currentMode == .background
+        let asking = Task { try await app.ask(message, in: sessionId, show: !background) }
+        if background, !(await Self.finishes(asking, within: Self.backgroundTime)), systemContext.currentMode.canContinueInForeground {
+            try await continueInForeground(IntentDialog("pi is still working on it. Open pi to see it finish?"), alwaysConfirm: false)
+            if let id = app.askedSession { app.requestedSession = id }
+        }
+        let reply = try await asking.value
         return .result(value: reply, dialog: IntentDialog(stringLiteral: reply.isEmpty ? "Done." : reply))
+    }
+
+    /// Whether `task` ends within `duration` (it keeps running either way).
+    @MainActor
+    private static func finishes(_ task: Task<String, Error>, within duration: Duration) async -> Bool {
+        let race = Race()
+        return await withCheckedContinuation { continuation in
+            Task { _ = try? await task.value; race.end(true, continuation) }
+            Task { try? await Task.sleep(for: duration); race.end(false, continuation) }
+        }
+    }
+
+    @MainActor
+    private final class Race {
+        private var ended = false
+
+        func end(_ finished: Bool, _ continuation: CheckedContinuation<Bool, Never>) {
+            guard !ended else { return }
+            ended = true
+            continuation.resume(returning: finished)
+        }
     }
 }
 
@@ -36,7 +68,7 @@ struct StartSessionIntent: AppIntent {
         "Starts a new pi session, to send messages to with Ask pi, so they continue one conversation.",
         categoryName: "Sessions"
     )
-    static let openAppWhenRun = true
+    static let supportedModes: IntentModes = [.background, .foreground(.dynamic)]
 
     @Parameter(title: "Title")
     var title: String?
@@ -44,7 +76,7 @@ struct StartSessionIntent: AppIntent {
     @MainActor
     func perform() async throws -> some IntentResult & ReturnsValue<SessionEntity> {
         guard let app = AppModel.shared else { throw AppError.message("pi isn't running.") }
-        let session = try await app.startSession(title: title)
+        let session = try await app.startSession(title: title, show: systemContext.currentMode == .foreground)
         return .result(value: SessionEntity(id: session.id, title: session.title))
     }
 }
