@@ -4,6 +4,8 @@
 It runs pi's own npm packages on iPhone and iPad: [`pi-coding-agent`](https://www.npmjs.com/package/@earendil-works/pi-coding-agent), [`pi-ai`](https://www.npmjs.com/package/@earendil-works/pi-ai), [`pi-durable`](https://www.npmjs.com/package/@earendil-works/pi-durable),
 [`pi-tui`](https://www.npmjs.com/package/@earendil-works/pi-tui), [`pi-mcp`](https://www.npmjs.com/package/@earendil-works/pi-mcp) and [`chord`](https://www.npmjs.com/package/@earendil-works/chord) (source: [earendil-works/pi](https://github.com/earendil-works/pi)).
 pi and its packages are Earendil Works'; this app is an independent project by Reindeer AI.
+While we love pi and the people who created it, we're not affiliated with them in any way, and this app isn't endorsed
+by them.
 
 Each session is its own pi agent with its own workspace on the device: a shell, Python, git, a browser, extensions and
 their apps, and on-device models, with any model provider you sign in to.
