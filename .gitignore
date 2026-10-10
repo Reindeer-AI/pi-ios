@@ -42,3 +42,6 @@ tools/mtls-test/.mtls-test/
 # Python caches
 __pycache__/
 *.pyc
+
+# App Store Connect API keys (never commit them)
+*.p8
