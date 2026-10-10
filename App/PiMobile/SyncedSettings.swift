@@ -31,7 +31,7 @@ final class SyncedSettings {
 
     static let syncedExtensionsKey = "syncedExtensions"
     static let keys: [String: Kind] = [
-        "networkEndpoint": .value, "defaultModel": .value,
+        "networkEndpoint": .value, "networkName": .value, "defaultModel": .value,
         "githubIdentity": .value, "githubTokenExpiry": .value,
         "crabboxBroker": .value, "crabboxIdentity": .value, "crabboxProvider": .value,
         "extensionSecrets": .dictionary, "vaultItems": .dictionary, "extensionData": .dictionary,
@@ -261,7 +261,7 @@ final class SyncedSettings {
 
     private static func title(_ key: String) -> String {
         switch key {
-        case "networkEndpoint": "Network server"
+        case "networkEndpoint", "networkName": "Network server"
         case "defaultModel": "Default model"
         case "githubIdentity", "githubTokenExpiry": "GitHub account"
         case "crabboxBroker", "crabboxIdentity", "crabboxProvider": "Crabbox"

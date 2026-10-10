@@ -1372,7 +1372,7 @@ private struct SessionWelcome: View {
     private let suggestions = [
         "What can you do on this phone?",
         "Write a Python script that prints the first 20 primes, then run it",
-        "Clone https://github.com/badlogic/pi-mono and summarize its README",
+        "Clone https://github.com/earendil-works/pi and summarize its README",
     ]
 
     var body: some View {
@@ -1580,6 +1580,7 @@ private struct SettingsView: View {
     @State private var link = ""
     @State private var linkError: String?
     @State private var endpoint = ""
+    @State private var serverName = ""
     @State private var choosingDefault = false
     @State private var search = ""
 
@@ -1643,15 +1644,18 @@ private struct SettingsView: View {
                         .textInputAutocapitalization(.never)
                         .autocorrectionDisabled()
                         .keyboardType(.URL)
+                    TextField("Name (optional)", text: $serverName)
+                        .autocorrectionDisabled()
                     Button("Save") {
                         app.networkEndpoint = endpoint
+                        app.networkName = serverName.trimmingCharacters(in: .whitespaces)
                         Task { await app.updateCustomProviders() }
                     }
-                    .disabled(endpoint == app.networkEndpoint)
+                    .disabled(endpoint == app.networkEndpoint && serverName.trimmingCharacters(in: .whitespaces) == app.networkName)
                 } header: {
                     Text("Network server")
                 } footer: {
-                    Text("An OpenAI-compatible server, such as Ollama on your Mac. Its models are discovered automatically.")
+                    Text("An OpenAI-compatible server, such as Ollama on your Mac. Its models are discovered automatically. Sessions show its name, or its address without one.")
                 }
 
                 Section("About") {
@@ -1670,7 +1674,10 @@ private struct SettingsView: View {
             }
             .navigationTitle("Settings")
             .toolbar { Button("Done") { dismiss() } }
-            .onAppear { endpoint = app.networkEndpoint }
+            .onAppear {
+                endpoint = app.networkEndpoint
+                serverName = app.networkName
+            }
             .sheet(isPresented: $choosingDefault) {
                 ModelPicker(app: app, selection: app.defaultModel) { app.defaultModel = $0 }
             }

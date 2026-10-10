@@ -1313,7 +1313,7 @@ final class TourTests: XCTestCase {
     /// The App Store screenshots' requests, oldest first (the list shows the newest on top). Each starts with the line its
     /// session is named after.
     static let screenshotPrompts = [
-        "Which pi-mono packages have the most TypeScript? Clone https://github.com/badlogic/pi-mono with git (shallow), count the .ts files in each package, and reply with a short markdown table sorted by count.",
+        "Which pi packages have the most TypeScript? Clone https://github.com/earendil-works/pi with git (shallow), count the .ts files in each package, and reply with a short markdown table sorted by count.",
         "Top stories on Hacker News right now? Open news.ycombinator.com in the browser and list the top three with their points, briefly.",
         "Chart the planets by their number of moons. Use Python to write the data as a CSV, then show a bar chart with show_html: an inline SVG sized for a phone screen, clean and colorful. Reply in one sentence.",
         "Build me a tip-splitting app. Write a pi extension with an app named Tip Split: the bill amount, a tip slider from 0 to 30%, the number of people, and the total per person, in large iOS-style type that looks right in light and dark mode. Add it to this session and open it.",
@@ -1378,7 +1378,7 @@ final class TourTests: XCTestCase {
         pause(3)
         shot(pad ? "2-chart" : "3-chart")
 
-        open("Which pi-mono packages")
+        open("Which pi packages")
         shot(pad ? "3-repository" : "4-repository")
 
         open("Top stories on Hacker News")

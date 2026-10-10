@@ -267,6 +267,10 @@ final class AppModel {
     var networkEndpoint: String {
         didSet { UserDefaults.standard.set(networkEndpoint, forKey: "networkEndpoint") }
     }
+    /// What sessions call the network server ("Network (Mac Studio)"); empty for its host.
+    var networkName: String = UserDefaults.standard.string(forKey: "networkName") ?? "" {
+        didSet { UserDefaults.standard.set(networkName, forKey: "networkName") }
+    }
 
     let models = ModelStore.shared
     /// A downloaded model to keep loaded from launch, so sessions using it start warm (the in-app server holds one).
@@ -696,7 +700,7 @@ final class AppModel {
             var discovered = savedNetworkModels() ?? []
             if discovered.isEmpty { discovered = await discoverNetworkModels(at: base) }
             providers.append([
-                "id": "network", "name": "Network (\(base.host() ?? networkEndpoint))", "baseUrl": networkEndpoint,
+                "id": "network", "name": "Network (\(networkName.isEmpty ? base.host() ?? networkEndpoint : networkName))", "baseUrl": networkEndpoint,
                 "models": discovered,
             ])
         }
@@ -707,6 +711,7 @@ final class AppModel {
     private func applySyncedSettings(_ keys: [String]) {
         let defaults = UserDefaults.standard
         if keys.contains("networkEndpoint") { networkEndpoint = defaults.string(forKey: "networkEndpoint") ?? "" }
+        if keys.contains("networkName") { networkName = defaults.string(forKey: "networkName") ?? "" }
         if keys.contains("defaultModel"), let data = defaults.data(forKey: Self.defaultModelKey) {
             defaultModel = try? JSONDecoder().decode(ModelRef.self, from: data)
         }
