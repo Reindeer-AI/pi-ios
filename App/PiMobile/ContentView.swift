@@ -351,6 +351,8 @@ private struct SessionView: View {
     @Environment(\.horizontalSizeClass) private var sizeClass
     /// An app's extension being shared (from its dock entry).
     @State private var sharing: SharedFile?
+    /// A message open for selecting part of its text (its menu's Select Text).
+    @State private var selecting: SelectableText?
 
     private var session: AppModel.Session? { app.sessions.first { $0.id == id } }
     private var browser: BrowserSession? { app.browser.sessions[id] }
@@ -372,6 +374,10 @@ private struct SessionView: View {
                         ForEach(session.items) { item in
                             TranscriptRow(item: item, items: session.items) { text in Task { await app.send(text, to: id) } }
                                 .contextMenu {
+                                    if let text = item.copyableText {
+                                        Button("Copy", systemImage: "doc.on.doc") { UIPasteboard.general.string = text }
+                                        Button("Select Text", systemImage: "selection.pin.in.out") { selecting = SelectableText(text: text) }
+                                    }
                                     Button("Fork from Here", systemImage: "arrow.triangle.branch") { fork(at: item.id) }
                                 }
                         }
@@ -501,6 +507,7 @@ private struct SessionView: View {
             app.reopenApps(in: id)
         }
         .sheet(item: $sharing) { file in ShareSheet(url: file.url).presentationDetents([.medium, .large]) }
+        .sheet(item: $selecting) { selectable in SelectTextSheet(text: selectable.text) }
         // A run may have added an extension with apps.
         .onChange(of: session?.running) { _, running in
             if running == false { Task { await app.loadApps(id) } }
@@ -2181,5 +2188,54 @@ private struct EngineHostView: UIViewRepresentable {
 
     func sizeThatFits(_ proposal: ProposedViewSize, uiView: UIView, context: Context) -> CGSize? {
         CGSize(width: 1, height: 1)
+    }
+}
+
+/// A message's text for its Select Text sheet.
+struct SelectableText: Identifiable {
+    let id = UUID()
+    let text: String
+}
+
+/// A message's whole text, to select any part of it and copy that (SwiftUI's selectable Text copies only all of it).
+private struct SelectTextSheet: View {
+    let text: String
+    @Environment(\.dismiss) private var dismiss
+
+    var body: some View {
+        NavigationStack {
+            SelectableTextView(text: text)
+                .navigationTitle("Select Text")
+                .navigationBarTitleDisplayMode(.inline)
+                .toolbar {
+                    ToolbarItem(placement: .cancellationAction) { Button("Done") { dismiss() } }
+                    ToolbarItem(placement: .primaryAction) {
+                        Button("Copy All", systemImage: "doc.on.doc") {
+                            UIPasteboard.general.string = text
+                            dismiss()
+                        }
+                    }
+                }
+        }
+    }
+}
+
+/// Read-only text with the system's selection handles and its Copy, Look Up and Share menu.
+private struct SelectableTextView: UIViewRepresentable {
+    let text: String
+
+    func makeUIView(context: Context) -> UITextView {
+        let view = UITextView()
+        view.isEditable = false
+        view.isSelectable = true
+        view.font = .preferredFont(forTextStyle: .body)
+        view.adjustsFontForContentSizeCategory = true
+        view.textContainerInset = UIEdgeInsets(top: 16, left: 12, bottom: 16, right: 12)
+        view.text = text
+        return view
+    }
+
+    func updateUIView(_ view: UITextView, context: Context) {
+        if view.text != text { view.text = text }
     }
 }

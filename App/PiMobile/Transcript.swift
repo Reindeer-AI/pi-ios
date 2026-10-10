@@ -20,6 +20,20 @@ enum TranscriptItem: Identifiable, Equatable {
         let arguments: String
     }
 
+    /// What a row's Copy puts on the pasteboard: a message's text (an answer as its Markdown), a tool's or command's
+    /// output, a compaction's summary; nil when there is none.
+    var copyableText: String? {
+        let text: String
+        switch self {
+        case .user(_, let message), .custom(_, _, let message): text = message
+        case .assistant(_, let answer, _, _, let error): text = answer.isEmpty ? error ?? "" : answer
+        case .tool(_, _, _, let output, _): text = output
+        case .bash(_, let command, let output, _): text = "$ \(command)\n\(output)"
+        case .compaction(_, let summary, _): text = summary
+        }
+        return text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? nil : text
+    }
+
     var id: Int {
         switch self {
         case .user(let id, _), .assistant(let id, _, _, _, _), .tool(let id, _, _, _, _), .custom(let id, _, _), .bash(let id, _, _, _),

@@ -1388,6 +1388,83 @@ final class TourTests: XCTestCase {
         shot(pad ? "4-browser" : "5-browser")
     }
 
+    /// Settings → Default model for new sessions: picks the model named DEFAULT_MODEL (as the picker shows it, e.g.
+    /// "Claude Sonnet 5.5"), the way a user does, so iCloud's copy of the setting follows.
+    func testSetDefaultModel() throws {
+        let name = try XCTUnwrap(ProcessInfo.processInfo.environment["DEFAULT_MODEL"], "the model's name")
+        launchReady()
+        tap(pi.buttons["Settings"])
+        // The setting's row reads "model · provider"; the sessions' rows behind the sheet also have a title before a comma.
+        let setting = NSPredicate(format: "label CONTAINS %@ AND NOT (label CONTAINS %@)", " · ", ", ")
+        let current = pi.buttons.matching(setting).firstMatch
+        XCTAssertTrue(current.waitForExistence(timeout: 10), "the default model's row")
+        print("default model was: \(current.label)")
+        tap(current)
+        let row = pi.buttons.matching(NSPredicate(format: "label BEGINSWITH %@", name)).firstMatch
+        for _ in 0..<6 where !row.isHittable { pi.swipeUp(); pause(0.5) }
+        tap(row)
+        pause(1.5)
+        let now = pi.buttons.matching(setting).firstMatch
+        print("default model now: \(now.label)")
+        XCTAssertTrue(now.label.hasPrefix(name), "the default model")
+        tap(pi.buttons["Done"].firstMatch)
+        pause(1)
+    }
+
+    /// A message's menu copies it (an answer as its Markdown, pasted back into the message box here) and opens it for
+    /// selecting part of its text.
+    func testCopyMessage() throws {
+        executionTimeAllowance = 5 * 60
+        launchReady()
+        tap(pi.buttons["New session"].firstMatch)
+        pause(1.5)
+        let message = pi.textFields["Message pi"]
+        let stop = pi.buttons["Stop"].firstMatch
+        tap(message)
+        message.typeText("Reply with only a Python code block that prints copy test, nothing else.")
+        tap(pi.buttons["Send"].firstMatch)
+        _ = stop.waitForExistence(timeout: 20)
+        let end = Date().addingTimeInterval(3 * 60)
+        while stop.exists && Date() < end { pause(1) }
+        pause(2)
+        if pi.buttons["Hide keyboard"].exists { pi.buttons["Hide keyboard"].tap() }
+
+        // The answer's row, by its code (the request says "copy test" too).
+        let answer = pi.staticTexts.matching(NSPredicate(format: "label CONTAINS %@", "print(")).firstMatch
+        XCTAssertTrue(answer.waitForExistence(timeout: 10), "the answer")
+        answer.press(forDuration: 1.0)
+        tap(pi.buttons["Copy"].firstMatch)
+        pause(1)
+        tap(message)
+        message.press(forDuration: 1.2)
+        tap(pi.menuItems["Paste"].firstMatch)
+        pause(1)
+        // The message box, holding text (it loses its "Message pi" label then; several lines can make it a text view).
+        let composer = pi.textViews.firstMatch.exists ? pi.textViews.firstMatch : pi.textFields.firstMatch
+        let pasted = composer.value as? String ?? ""
+        print("pasted: \(pasted)")
+        XCTAssertTrue(pasted.contains("```") && pasted.contains("copy test"), "the answer's Markdown, code fence and all")
+        composer.typeText(String(repeating: XCUIKeyboardKey.delete.rawValue, count: pasted.count + 2))
+        pause(1)
+
+        tap(message)
+        message.typeText("!echo first line; echo second line")
+        tap(pi.buttons["Send"].firstMatch)
+        let output = pi.staticTexts.matching(NSPredicate(format: "label BEGINSWITH %@", "echo first line")).firstMatch
+        XCTAssertTrue(output.waitForExistence(timeout: 20), "the command's row")
+        pause(2)
+        if pi.buttons["Hide keyboard"].exists { pi.buttons["Hide keyboard"].tap() }
+        output.press(forDuration: 1.0)
+        tap(pi.buttons["Select Text"].firstMatch)
+        let text = pi.textViews.firstMatch
+        XCTAssertTrue(text.waitForExistence(timeout: 5), "the Select Text sheet")
+        let value = text.value as? String ?? ""
+        print("select text: \(value)")
+        XCTAssertTrue(value.contains("second line"), "the command and its output")
+        tap(pi.buttons["Done"].firstMatch)
+        pause(1)
+    }
+
     /// Settings → About → Acknowledgements: every component's license, searchable, each with its full text.
     func testAcknowledgements() throws {
         launchReady()
