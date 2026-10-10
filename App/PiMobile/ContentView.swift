@@ -46,8 +46,10 @@ struct RootView: View {
         .onChange(of: app.sessionsRequested) {
             if sizeClass == .regular { withAnimation { columns = .all } } else { path.removeAll() }
         }
+        // An app beside the session takes the list's room on a narrower iPad, which gets it back when the app closes or
+        // minimizes (this layout has no sidebar button to bring it back).
         .onChange(of: openSessionShowsApp) { _, shows in
-            if shows, sizeClass == .regular, width < 1200 { withAnimation { columns = .detailOnly } }
+            if sizeClass == .regular, width < 1200 { withAnimation { columns = shows ? .detailOnly : .all } }
         }
         // A session deleted while open: nothing is open.
         .onChange(of: app.sessions.map(\.id)) { _, ids in

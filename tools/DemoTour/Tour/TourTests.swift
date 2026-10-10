@@ -1350,7 +1350,9 @@ final class TourTests: XCTestCase {
     func testScreenshots() throws {
         executionTimeAllowance = 10 * 60
         let folder = try XCTUnwrap(ProcessInfo.processInfo.environment["SCREENSHOT_DIR"], "where to save the screenshots")
-        let pad = UIDevice.current.userInterfaceIdiom == .pad
+        // By pi's window (the test runner, an iPhone app, reports a phone even on an iPad).
+        launchReady()
+        let pad = pi.windows.firstMatch.frame.width > 700
         func shot(_ name: String) {
             let file = URL(fileURLWithPath: folder).appending(path: "\(pad ? "ipad" : "iphone")-\(name).png")
             try? XCUIScreen.main.screenshot().pngRepresentation.write(to: file)
@@ -1358,18 +1360,46 @@ final class TourTests: XCTestCase {
         }
         func open(_ title: String) {
             if !pad, !pi.buttons["New session"].isHittable { pi.navigationBars.buttons.element(boundBy: 0).tap(); pause(1.5) }
-            tap(pi.buttons.matching(NSPredicate(format: "label BEGINSWITH %@", title)).firstMatch)
+            let row = pi.buttons.matching(NSPredicate(format: "label BEGINSWITH %@", title)).firstMatch
+            // An iPad hides the sessions list beside a session and its app: its sidebar button, or a swipe from the edge.
+            if pad, !(row.exists && row.isHittable) {
+                let sidebar = pi.buttons.matching(NSPredicate(format: "label CONTAINS[c] %@", "sidebar")).firstMatch
+                if sidebar.exists && sidebar.isHittable {
+                    sidebar.tap()
+                } else {
+                    pi.coordinate(withNormalizedOffset: CGVector(dx: 0.005, dy: 0.5))
+                        .press(forDuration: 0.1, thenDragTo: pi.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5)))
+                }
+                pause(1.5)
+                if !(row.exists && row.isHittable) {
+                    try? XCUIScreen.main.screenshot().pngRepresentation.write(to: URL(fileURLWithPath: folder).appending(path: "debug-sidebar.png"))
+                }
+            }
+            tap(row)
             pause(3)
             if pi.buttons["Hide keyboard"].exists { pi.buttons["Hide keyboard"].tap(); pause(0.5) }
         }
-        launchReady()
         pause(2)
         if !pad { shot("1-sessions") }
 
         open("Build me a tip-splitting app")
-        if !pi.webViews.firstMatch.exists { tap(pi.buttons.matching(NSPredicate(format: "label CONTAINS %@", "Tip Split")).firstMatch) }
-        _ = pi.webViews.firstMatch.waitForExistence(timeout: 20)
-        pause(4)
+        // From the dock: the page may be loaded already, parked off screen.
+        let dockEntry = pi.buttons.matching(NSPredicate(format: "label BEGINSWITH %@", "Tip Split")).firstMatch
+        if dockEntry.waitForExistence(timeout: 10) { dockEntry.tap() }
+        _ = pi.buttons["Minimize"].firstMatch.waitForExistence(timeout: 20)
+        pause(3)
+        // A bill to split, then the keyboard away.
+        let bill = pi.webViews.textFields.firstMatch
+        if bill.waitForExistence(timeout: 5), ["", "0", "0.00"].contains((bill.value as? String) ?? "") {
+            bill.tap()
+            pause(1)
+            bill.typeText("86.40")
+            // The keyboard's checkmark on an iPhone, its hide key on an iPad (tapping the page's text doesn't end the editing).
+            let done = pi.buttons["Done"].firstMatch
+            let hide = pi.keyboards.buttons["Hide keyboard"].firstMatch
+            if done.waitForExistence(timeout: 3) { done.tap() } else if hide.exists { hide.tap() } else { bill.typeText("\n") }
+        }
+        pause(3)
         shot(pad ? "1-app" : "2-app")
         if pi.buttons["Minimize"].exists { pi.buttons["Minimize"].firstMatch.tap(); pause(1.5) }
 
