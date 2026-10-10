@@ -8,6 +8,13 @@ pi and its packages are Earendil Works'; this app is an independent project by R
 Each session is its own pi agent with its own workspace on the device: a shell, Python, git, a browser, extensions and
 their apps, and on-device models, with any model provider you sign in to.
 
+<table>
+  <tr>
+    <td valign="top" width="50%"><img src="docs/screenshots/browser-booking.png" width="300" alt="pi after booking flights in its browser: the cart, the price differences it found, and how to finish"><br>Booking flights in its browser, up to the payment you finish yourself</td>
+    <td valign="top" width="50%"><img src="docs/screenshots/mcp.png" width="300" alt="pi asking the DeepWiki MCP server about a GitHub repository"><br>Asking an MCP server, and checking its answer</td>
+  </tr>
+</table>
+
 ## What it does
 
 - **Sessions** that keep working in the background, resume after the app is closed, compact their context the way pi
