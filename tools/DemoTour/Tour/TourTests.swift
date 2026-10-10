@@ -1492,6 +1492,46 @@ final class TourTests: XCTestCase {
         pause(1)
     }
 
+    /// While the agent writes, the reader can scroll up and stay there (new output doesn't pull the transcript down); the
+    /// arrow takes them back to the end, which follows again.
+    func testScrollWhileStreaming() throws {
+        executionTimeAllowance = 5 * 60
+        launchReady()
+        tap(pi.buttons["New session"].firstMatch)
+        pause(1.5)
+        let message = pi.textFields["Message pi"]
+        tap(message)
+        message.typeText("Write 50 numbered paragraphs, three sentences each, every one about a different animal. No tools.")
+        tap(pi.buttons["Send"].firstMatch)
+        if pi.buttons["Hide keyboard"].waitForExistence(timeout: 2) { pi.buttons["Hide keyboard"].tap() }
+        let stop = pi.buttons["Stop"].firstMatch
+        XCTAssertTrue(stop.waitForExistence(timeout: 20), "the run")
+        // Followed, the request leaves the top once the answer is taller than the screen (the transcript's, not the title).
+        let transcript = pi.scrollViews.firstMatch
+        let request = transcript.staticTexts.matching(NSPredicate(format: "label BEGINSWITH %@", "Write 50 numbered")).firstMatch
+        let tall = Date().addingTimeInterval(60)
+        while request.isHittable && stop.exists && Date() < tall { pause(0.5) }
+        XCTAssertFalse(request.isHittable, "followed to the end")
+
+        // Up to the request, while the answer still streams.
+        for _ in 0..<12 where !request.isHittable { transcript.swipeDown(velocity: .fast); pause(0.5) }
+        XCTAssertTrue(request.isHittable, "scrolled up to the request")
+        XCTAssertTrue(stop.exists, "still streaming")
+        let place = request.frame.minY
+        pause(4)
+        print("request moved from \(place) to \(request.frame.minY)")
+        XCTAssertEqual(request.frame.minY, place, accuracy: 2, "the transcript stayed where the reader left it")
+
+        let arrow = pi.buttons["Scroll to the End"].firstMatch
+        XCTAssertTrue(arrow.exists, "the arrow to the end")
+        tap(arrow)
+        pause(2)
+        XCTAssertFalse(request.isHittable, "back at the end")
+        XCTAssertFalse(arrow.exists, "following again")
+        let done = Date().addingTimeInterval(2 * 60)
+        while stop.exists && Date() < done { pause(1) }
+    }
+
     /// Python's compiled modules, each a framework of its own (renamed for the App Store by the embed script), import in
     /// pi's shell: a `!` command, no model. Escaped, not quoted (the keyboard may make quotes curly).
     func testPythonModules() throws {

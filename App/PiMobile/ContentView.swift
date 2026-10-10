@@ -355,6 +355,11 @@ private struct SessionView: View {
     @State private var sharing: SharedFile?
     /// A message open for selecting part of its text (its menu's Select Text).
     @State private var selecting: SelectableText?
+    /// Whether the transcript keeps up with new output: until the reader scrolls up, and again once they're back at
+    /// the end (or send a message, or tap the arrow).
+    @State private var following = true
+    /// Whether the end of the transcript is in view.
+    @State private var atEnd = true
 
     private var session: AppModel.Session? { app.sessions.first { $0.id == id } }
     private var browser: BrowserSession? { app.browser.sessions[id] }
@@ -374,7 +379,10 @@ private struct SessionView: View {
                 LazyVStack(alignment: .leading, spacing: 14) {
                     if let session {
                         ForEach(session.items) { item in
-                            TranscriptRow(item: item, items: session.items) { text in Task { await app.send(text, to: id) } }
+                            TranscriptRow(item: item, items: session.items) { text in
+                                following = true
+                                Task { await app.send(text, to: id) }
+                            }
                                 .contextMenu {
                                     if let text = item.copyableText {
                                         Button("Copy", systemImage: "doc.on.doc") { UIPasteboard.general.string = text }
@@ -405,7 +413,41 @@ private struct SessionView: View {
                 .frame(maxWidth: Self.readableWidth)
                 .frame(maxWidth: .infinity)
             }
-            .defaultScrollAnchor(.bottom)
+            // Opens at the end, and a short transcript sits at the bottom. Followed, the end stays in view as the transcript
+            // or the space for it changes (the keyboard); otherwise the transcript keeps the reader's place.
+            .defaultScrollAnchor(.bottom, for: .initialOffset)
+            .defaultScrollAnchor(.bottom, for: .alignment)
+            .defaultScrollAnchor(following ? .bottom : nil, for: .sizeChanges)
+            .onScrollGeometryChange(for: Bool.self) { geometry in
+                geometry.contentOffset.y + geometry.containerSize.height - geometry.contentInsets.bottom >= geometry.contentSize.height - 40
+            } action: { _, isAtEnd in
+                atEnd = isAtEnd
+            }
+            .onScrollPhaseChange { _, phase in
+                switch phase {
+                case .interacting: following = false
+                case .idle where atEnd: following = true
+                default: break
+                }
+            }
+            .overlay(alignment: .bottom) {
+                if !following, !atEnd {
+                    Button {
+                        following = true
+                        withAnimation { proxy.scrollTo("bottom", anchor: .bottom) }
+                    } label: {
+                        Image(systemName: "arrow.down")
+                            .font(.body.weight(.semibold))
+                            .frame(width: 40, height: 40)
+                            .background(.regularMaterial, in: Circle())
+                            .shadow(color: .black.opacity(0.15), radius: 3, y: 1)
+                    }
+                    .buttonStyle(.plain)
+                    .accessibilityLabel("Scroll to the End")
+                    .padding(.bottom, 8)
+                    .transition(.opacity)
+                }
+            }
             .scrollDismissesKeyboard(.interactively)
             // Files dropped on the session (from Files, Photos, another app beside pi) go with the next message.
             .dropDestination(for: DroppedFile.self) { files, _ in
@@ -417,8 +459,8 @@ private struct SessionView: View {
                     SessionWelcome { prompt = $0 }
                 }
             }
-            .onChange(of: session?.items.count) { proxy.scrollTo("bottom") }
-            .onChange(of: session?.draft?.text) { proxy.scrollTo("bottom") }
+            .onChange(of: session?.items.count) { if following { proxy.scrollTo("bottom") } }
+            .onChange(of: session?.draft?.text) { if following { proxy.scrollTo("bottom") } }
             .overlay(alignment: .top) {
                 if let notice = session?.notice {
                     NoticeBanner(notice: notice)
@@ -429,7 +471,7 @@ private struct SessionView: View {
                         }
                 }
             }
-            .onChange(of: session?.tools.last?.output) { proxy.scrollTo("bottom") }
+            .onChange(of: session?.tools.last?.output) { if following { proxy.scrollTo("bottom") } }
         }
         .safeAreaInset(edge: .bottom) { composer }
         // Inside the toolbar's view (an inspector outside it takes the session's toolbar away in a split view).
@@ -652,6 +694,7 @@ private struct SessionView: View {
             }
         }
         prompt = ""
+        following = true
         Task { await app.send(text, to: id, delivery: delivery) }
     }
 
