@@ -1660,6 +1660,58 @@ final class TourTests: XCTestCase {
         pause(2)
     }
 
+    /// A background check (Fixtures/checktest.ts, packed by make-piext.py, opened with -openSharedFile from SHARED_FILE)
+    /// in Settings → Extensions: Run Now asks the user about the extension's notifications, then iOS for pi's, and the
+    /// notification shows; the row has its result. Then a launch with -runDueChecks runs it as when iOS wakes pi, without
+    /// asking again. The shell clears pi's earlier answers.
+    func testBackgroundCheck() throws {
+        executionTimeAllowance = 6 * 60
+        let springboard = XCUIApplication(bundleIdentifier: "com.apple.springboard")
+        dismissShortcutLeftovers(springboard)
+        let path = try XCTUnwrap(ProcessInfo.processInfo.environment["SHARED_FILE"], "the test extension's .piext")
+        pi.launchArguments += ["-openSharedFile", path]
+        launchReady()
+        tap(pi.buttons["Add to Every Session"].firstMatch)
+        pause(2)
+        if pi.buttons["Done"].exists { pi.buttons["Done"].firstMatch.tap() }
+        tap(pi.buttons["Settings"])
+        tap(pi.buttons["Extensions and skills"].firstMatch)
+        // Below the extensions, which the list draws as they scroll in.
+        let runNow = pi.buttons["Run Now"].firstMatch
+        _ = pi.staticTexts["Every session"].waitForExistence(timeout: 15)
+        for _ in 0..<12 where !(runNow.exists && runNow.isHittable) { pi.swipeUp(); pause(0.7) }
+        XCTAssertTrue(runNow.exists, "the check in Settings")
+        tap(runNow)
+        let ask = pi.alerts["Allow “checktest” to send you notifications?"]
+        XCTAssertTrue(ask.waitForExistence(timeout: 15), "pi asks about the extension's notifications")
+        pause(1)
+        ask.buttons["Allow"].tap()
+        // iOS's own question for pi, the first time any extension notifies.
+        let system = springboard.alerts.firstMatch
+        if system.waitForExistence(timeout: 5) {
+            print("iOS asks: \(system.label)")
+            system.buttons["Allow"].tap()
+        }
+        let ran = NSPredicate(format: "label CONTAINS %@", "Background check ran at")
+        let banner = springboard.descendants(matching: .any).matching(ran).firstMatch
+        XCTAssertTrue(banner.waitForExistence(timeout: 20), "the notification")
+        print("notification: \(banner.label)")
+        let status = pi.staticTexts.matching(NSPredicate(format: "label CONTAINS %@", "notified at")).firstMatch
+        XCTAssertTrue(status.waitForExistence(timeout: 10), "the check's result in Settings")
+        print("check status: \(status.label)")
+        pause(5)
+
+        // As when iOS wakes pi: a launch that runs the due checks, with the answer kept.
+        pi.terminate()
+        pi.launchArguments = ["-runDueChecks", "YES"]
+        pi.launch()
+        let again = springboard.descendants(matching: .any).matching(ran).firstMatch
+        XCTAssertTrue(again.waitForExistence(timeout: 60), "the notification from the launch's run")
+        print("notification again: \(again.label)")
+        XCTAssertFalse(pi.alerts.firstMatch.exists, "no question this time")
+        pause(2)
+    }
+
     /// Opening a shared session (-openSharedFile, set by the shell to a .pisession in the app's tmp): the sheet, then the
     /// session, opened as a new one with its history.
     func testOpenSharedSession() throws {

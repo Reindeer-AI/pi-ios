@@ -646,6 +646,12 @@ onCommand("session.prompt", async ({ id, text: typed, whenBusy }: { id: number; 
 /** A shared extension file's contents (.piext), for the share sheet: a session's extension, or a default. */
 onCommand("extensions.share", ({ name, sessionId }: { name: string; sessionId?: number }) => requireEngine().extensions.share(name, sessionId));
 
+/** The background checks extensions registered (pi.registerCheck), for the app to schedule and run when iOS wakes it. */
+onCommand("checks.list", () => requireEngine().extensions.checks());
+
+/** Runs one background check (`key`: extension/name) within `timeoutMs`. */
+onCommand("checks.run", ({ key, timeoutMs }: { key: string; timeoutMs?: number }) => requireEngine().extensions.runCheck(key, timeoutMs ?? 20_000));
+
 /** An extension's folder and files, to read and change in Settings (ExtensionSourceView). */
 onCommand("extensions.source", ({ name, sessionId }: { name: string; sessionId?: number }) => requireEngine().extensions.source(name, sessionId));
 

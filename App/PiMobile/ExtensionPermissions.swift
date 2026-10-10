@@ -1,17 +1,18 @@
 import CoreLocation
 import SwiftUI
+import UserNotifications
 import WebKit
 
-/// What each extension may use on this device: the camera, the microphone, and the location. pi asks the first time an
-/// extension wants one ("Allow “flights” to use the camera?") and remembers the answer, yes or no, which the user
-/// changes in Settings → Extensions → the extension → Permissions. iOS then asks once more, for pi itself, the first
-/// time any extension uses it. Kept on this device only, as iOS keeps its own permissions.
+/// What each extension may use on this device: the camera, the microphone, the location, and notifications. pi asks the
+/// first time an extension wants one ("Allow “flights” to use the camera?") and remembers the answer, yes or no, which
+/// the user changes in Settings → Extensions → the extension → Permissions. iOS then asks once more, for pi itself, the
+/// first time any extension uses it. Kept on this device only, as iOS keeps its own permissions.
 @MainActor
 final class ExtensionPermissions {
     static let shared = ExtensionPermissions()
 
     enum Capability: String, CaseIterable, Identifiable {
-        case camera, microphone, location
+        case camera, microphone, location, notifications
         var id: String { rawValue }
 
         var title: String {
@@ -19,6 +20,7 @@ final class ExtensionPermissions {
             case .camera: "Camera"
             case .microphone: "Microphone"
             case .location: "Location"
+            case .notifications: "Notifications"
             }
         }
 
@@ -27,16 +29,26 @@ final class ExtensionPermissions {
             case .camera: "camera"
             case .microphone: "mic"
             case .location: "location"
+            case .notifications: "bell"
             }
         }
 
-        /// As the question says it: "the camera".
-        var phrase: String {
+        /// What it uses, as the question says it ("the camera"); nil for one it does rather than uses.
+        var used: String? {
             switch self {
             case .camera: "the camera"
             case .microphone: "the microphone"
             case .location: "your location"
+            case .notifications: nil
             }
+        }
+
+        /// The question's verb phrase for several of them: "use the camera and the microphone", "send you notifications".
+        static func phrase(_ capabilities: [Capability]) -> String {
+            let used = capabilities.compactMap(\.used)
+            var parts = used.isEmpty ? [] : ["use " + used.joined(separator: " and ")]
+            if capabilities.contains(.notifications) { parts.append("send you notifications") }
+            return parts.joined(separator: " and ")
         }
     }
 
@@ -68,16 +80,17 @@ final class ExtensionPermissions {
         Capability.allCases.compactMap { capability in decision(capability, for: extensionName).map { (capability, $0) } }
     }
 
-    /// Whether `extensionName` may use all of `capabilities`, asking about those not yet answered.
+    /// Whether `extensionName` may use all of `capabilities`, asking about those not yet answered. In the background
+    /// (a background check) nothing can be asked, so an unanswered one is refused, and still asked about later.
     func request(_ capabilities: [Capability], for extensionName: String) async -> Bool {
         let unanswered = capabilities.filter { decision($0, for: extensionName) == nil }
         if unanswered.isEmpty { return capabilities.allSatisfy { decision($0, for: extensionName) == true } }
+        guard UIApplication.shared.applicationState == .active else { return false }
         let question = "\(extensionName)/" + unanswered.map(\.rawValue).joined(separator: "+")
         if let pending = asking[question] { return await pending.value && capabilities.allSatisfy { decision($0, for: extensionName) == true } }
         let task = Task { @MainActor in
-            let what = unanswered.map(\.phrase).joined(separator: " and ")
             let allowed = await UserDialog.confirm(
-                title: "Allow “\(extensionName)” to use \(what)?",
+                title: "Allow “\(extensionName)” to \(Capability.phrase(unanswered))?",
                 message: "You can change this in Settings → Extensions → \(extensionName).",
                 confirmLabel: "Allow",
                 cancelLabel: "Don’t Allow"
@@ -89,6 +102,31 @@ final class ExtensionPermissions {
         let allowed = await task.value
         asking[question] = nil
         return allowed && capabilities.allSatisfy { decision($0, for: extensionName) == true }
+    }
+
+    /// Posts a notification from `extensionName` (`pi.notify`), once it may send them and iOS lets pi.
+    func notify(for extensionName: String, title: String, body: String) async throws {
+        guard await request([.notifications], for: extensionName) else {
+            throw AppError.message(decision(.notifications, for: extensionName) == false
+                ? "The user didn't allow \(extensionName) to send notifications"
+                : "\(extensionName) may send notifications once the user allows it, which pi asks the next time it's open")
+        }
+        let center = UNUserNotificationCenter.current()
+        if await center.notificationSettings().authorizationStatus == .notDetermined,
+           UIApplication.shared.applicationState == .active {
+            _ = try? await center.requestAuthorization(options: [.alert, .sound, .badge])
+        }
+        switch await center.notificationSettings().authorizationStatus {
+        case .authorized, .provisional, .ephemeral: break
+        default: throw AppError.message("pi may not send notifications: Settings → Notifications → pi")
+        }
+        let content = UNMutableNotificationContent()
+        content.title = title.isEmpty ? extensionName : title
+        content.body = body
+        content.threadIdentifier = extensionName
+        content.sound = .default
+        content.userInfo = ["extension": extensionName]
+        try await center.add(UNNotificationRequest(identifier: UUID().uuidString, content: content, trigger: nil))
     }
 
     /// The device's location for `extensionName`, once it may have it (pi.location in extensions and app pages).

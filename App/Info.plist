@@ -2,10 +2,16 @@
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
 <dict>
-	<!-- iOS 26 continued processing for user-started runs (BackgroundRun.swift). -->
+	<!-- Extensions' background checks (BackgroundChecks.swift): background refresh wakes pi now and then. -->
+	<key>UIBackgroundModes</key>
+	<array>
+		<string>fetch</string>
+	</array>
+	<!-- iOS 26 continued processing for user-started runs (BackgroundRun.swift), and the background checks' refresh. -->
 	<key>BGTaskSchedulerPermittedIdentifiers</key>
 	<array>
 		<string>$(PRODUCT_BUNDLE_IDENTIFIER).run.*</string>
+		<string>$(PRODUCT_BUNDLE_IDENTIFIER).checks</string>
 	</array>
 	<!-- The OAuth app for Settings → GitHub's device login (GitHubService). A client ID is not a secret. -->
 	<key>PIGitHubClientID</key>

@@ -29,7 +29,7 @@ import {
 } from "@earendil-works/pi-durable";
 import { request } from "../bridge.ts";
 import { NativeExecutionEnv } from "../env.ts";
-import { type Adapted, adapt, type Host, hostModules, type Prompt, startRequest, type UserBash } from "./adapter.ts";
+import { type Adapted, adapt, type CheckDefinition, type Host, hostModules, type Prompt, startRequest, type UserBash } from "./adapter.ts";
 import { type AppDefinition, type AppHandle, appKey, closeApp as endApp, listApps } from "./apps.ts";
 import { installDependencies, installPackage } from "./npm.ts";
 import { codingAgentModule } from "./coding-agent.ts";
@@ -725,6 +725,36 @@ export class Extensions {
 		return { root, files: runtime.files.filter((file) => file.startsWith(`${root}/`)) };
 	}
 
+	// ---- background checks ----
+
+	/** The background checks the defaults registered (`pi.registerCheck`), which the app runs when iOS wakes it. */
+	checks(): { key: string; extension: string; name: string; description: string | null; every: number }[] {
+		return this.defaultChecks().map(({ key, extension, check }) => ({ key, extension, name: check.name, description: check.description ?? null, every: check.every }));
+	}
+
+	/** Runs one background check within `timeoutMs`: what it returned (a short text), or what it threw. */
+	async runCheck(key: string, timeoutMs: number): Promise<{ result: string | null }> {
+		const found = this.defaultChecks().find((each) => each.key === key);
+		if (!found) throw new Error(`No background check ${key}`);
+		const controller = new AbortController();
+		const timedOut = new Promise<never>((_, reject) => {
+			controller.signal.addEventListener("abort", () => reject(new Error(`didn't finish in ${Math.round(timeoutMs / 1000)} seconds`)));
+		});
+		const timer = setTimeout(() => controller.abort(), timeoutMs);
+		try {
+			const value = await Promise.race([Promise.resolve(found.check.run({ signal: controller.signal })), timedOut]);
+			return { result: typeof value === "string" ? value : value == null ? null : JSON.stringify(value) };
+		} finally {
+			clearTimeout(timer);
+		}
+	}
+
+	private defaultChecks(): { key: string; extension: string; check: CheckDefinition }[] {
+		return [...this.loaded]
+			.filter(([name, loaded]) => name.startsWith("default:") && !loaded.record.disabled)
+			.flatMap(([name, loaded]) => loaded.adapted.checks.map((check) => ({ key: `${extensionOf(name)}/${check.name}`, extension: extensionOf(name), check })));
+	}
+
 	// ---- source ----
 
 	/**
@@ -1133,6 +1163,7 @@ function failed(name: string, note: string): Adapted {
 		apps: async () => [],
 		openApp: async () => undefined,
 		offeredApps: [],
+		checks: [],
 		shutdown: async () => {},
 	};
 }
@@ -1146,6 +1177,7 @@ export const EXTENSIONS_GUIDE = `You can extend yourself with pi extensions (pi-
 - pi.registerCommand adds a /command the user runs from the message box. ctx.ui dialogs (select, confirm, input, editor), notify, setStatus, setWidget, setFooter, setEditorText, and ctx.ui.custom show in the app; pi-tui components (SelectList, Input, Editor, Text, Markdown, Loader, Container, …) become native views you tap, other components show their rendered lines with a key bar. On iOS there is also ctx.ui.panel({ html, title, placement: "sheet" | "widget", onMessage }) for an HTML page (in it, pi.post(data), pi.onMessage(callback), pi.close(result)); it returns { post, update, close, closed }. Everything @earendil-works/pi-coding-agent exports can be imported; its CLI parts (SessionManager, SettingsManager, createAgentSession, built-in tool factories) throw.
 - Apps (iOS): for a page the user keeps using, not a one-off sheet, register an app: pi.registerApp({ name, title, icon (an SF Symbol name, e.g. "airplane"), description, render: (app) => html, onMessage: (data, app) => …, onOpen/onMinimize/onRestore/onClose?, shared?: true for one app in every session }). It opens in a sheet; closing the sheet minimizes it to the session's dock above the message box, with its page still running, and only Close ends it. Its record and saved state outlive relaunches: render(app) draws the page from app.state when it opens again. Open it with pi.apps.open(name, { visible?: false }) (from a command, a tool, or an event); pi.apps.get(name) finds it running. The handle: app.post(data) to the page, app.setState(json), app.state, app.setBadge("3") on its dock entry, app.setTitle, app.refresh() (render again), app.show(), app.minimize(), app.close(), app.closed, app.ui (the session's ctx.ui). In the page: pi.post(data), pi.onMessage(callback), pi.state.get()/set(json)/onChange(callback) (saved with the app), pi.minimize(), pi.close(). Keep what the page shows in app.state or the extension's own storage, so a page drawn again after a relaunch looks the same. You can list and open the session's apps yourself (apps_list, app_open, app_close). ctx.ui.panel({ …, persistent: true, icon }) is a quick app that minimizes the same way but ends with the engine.
 - Synced storage (iOS): pi.synced keeps an extension's small JSON values (128 KB in all) on all the user's devices, through iCloud Keychain: pi.synced.get(key), .set(key, value), .delete(key), .keys(); synchronous. Devices merge it key by key, so keep each record under its own key ("entry:<id>") rather than one list. Changes from another device arrive when pi next starts. Prefer it over a file for settings and records the user expects on every device; secrets go to pi.secrets, sensitive numbers to pi.vault.
+- Background checks and notifications (iOS): pi.registerCheck({ name, description, every: minutes (15 at least), run: async ({ signal }) => short text }) runs when iOS wakes pi (as often as iOS decides: often every 15 to 60 minutes, not after the user swipes pi away or in Low Power Mode), for a few seconds, without a session or the model, and only for an extension added for every session. It suits polling an API and remembering what it saw (pi.synced); await pi.notify({ title, body }) tells the user (asked the first time, like the camera). The user sees each check and its last result in Settings → Extensions.
 - Device (iOS): await pi.location() (also ctx.location) gives { latitude, longitude, accuracy, altitude?, timestamp }; an app's page has the same pi.location() and navigator.mediaDevices.getUserMedia for the camera and microphone (or <input type="file" accept="image/*" capture> for one photo). The user is asked the first time each extension wants one and can change it in Settings; a denial rejects (handle it). The engine itself has no camera or microphone: use them from an app's page.
 - Vault (iOS): pi.vault keeps sensitive values (card numbers and security codes, passport, ID, license and social security numbers) behind Face ID; keep everything else (names, addresses, expiry dates) in the extension's own storage. pi.vault.add({ kind: "card" | "passport" | "id" | "license" | "ssn" | "note", label: "Chase Sapphire Preferred", fields?: [{ key, label }] }) opens the app's secure sheet, where the user types the values (you never see them), and returns { id, label, hint, fields } (or null); with id, it re-enters an item of yours. pi.vault.set({ id?, kind, label, values?, hint? }) stores values you have, or renames; pi.vault.delete(id) (yours only); pi.vault.list({ kind? }) gives every item's name and hint, never values; pi.vault.choose({ kind, reason }) is the app's picker. To use a value without seeing it: pi.vault.fill(id, { field, ref }) types it into the session's browser page, and pi.vault.placeholder(id, field) ("{{vault:ID/FIELD}}") in a fetch body or header is replaced natively. pi.vault.get(id, { fields, reason }) reveals values only after the user's consent and Face ID; they are masked in what your tools return. Item names are public: the user says "my passport" or "my Chase card".
 - Extensions run in this app's JavaScript engine with Node's fs, path, os, crypto, events, util, url, buffer, and asynchronous child_process (exec, execFile, spawn), plus fetch. There is no execSync or spawnSync, and no native Node addons.

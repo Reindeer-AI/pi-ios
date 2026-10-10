@@ -1,4 +1,5 @@
 import SwiftUI
+import UserNotifications
 
 @main
 struct PiMobileApp: App {
@@ -21,7 +22,19 @@ struct PiMobileApp: App {
     }
 }
 
-final class AppDelegate: NSObject, UIApplicationDelegate {
+final class AppDelegate: NSObject, UIApplicationDelegate, UNUserNotificationCenterDelegate {
+    func application(_ application: UIApplication, didFinishLaunchingWithOptions launchOptions: [UIApplication.LaunchOptionsKey: Any]? = nil) -> Bool {
+        // Extensions' background checks: iOS's wake-ups need their handler before launch ends.
+        MainActor.assumeIsolated { BackgroundChecks.shared.register() }
+        UNUserNotificationCenter.current().delegate = self
+        return true
+    }
+
+    /// Extensions' notifications show while pi is open too.
+    nonisolated func userNotificationCenter(_ center: UNUserNotificationCenter, willPresent notification: UNNotification) async -> UNNotificationPresentationOptions {
+        [.banner, .list, .sound]
+    }
+
     /// iOS relaunches the app to deliver events of the background model-download session.
     func application(
         _ application: UIApplication,

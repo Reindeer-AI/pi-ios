@@ -391,11 +391,21 @@ final class AppModel {
                 confirmLabel: "Add"
             )
         }
-        // The device's location for an extension (`pi.location()`), once the user allows it (ExtensionPermissions).
+        // The device's location for an extension (`pi.location()`), and its notifications (`pi.notify()`), once the user
+        // allows it (ExtensionPermissions).
         engine.register(service: "device") { method, params in
-            guard method == "location" else { throw EngineError.unknownMethod("device.\(method)") }
-            let requester = (params as? [String: Any])?["requester"] as? String ?? "?"
-            return try await ExtensionPermissions.shared.location(for: requester)
+            let arguments = params as? [String: Any] ?? [:]
+            let requester = arguments["requester"] as? String ?? "?"
+            switch method {
+            case "location":
+                return try await ExtensionPermissions.shared.location(for: requester)
+            case "notify":
+                try await ExtensionPermissions.shared.notify(for: requester, title: arguments["title"] as? String ?? "",
+                                                             body: arguments["body"] as? String ?? "")
+                return nil
+            default:
+                throw EngineError.unknownMethod("device.\(method)")
+            }
         }
         // The pasteboard, for extensions (pi-coding-agent's `copyToClipboard`).
         engine.register(service: "clipboard") { method, params in
@@ -521,6 +531,8 @@ final class AppModel {
 
     private func runLaunchArguments() async throws {
         let defaults = UserDefaults.standard
+        // `-runDueChecks YES` (tests): every background check runs, as when iOS wakes pi, once the extensions load.
+        if defaults.bool(forKey: "runDueChecks") { Task { await BackgroundChecks.shared.runDue(within: BackgroundChecks.budget, all: true) } }
         if let link = defaults.string(forKey: "downloadModel") { try models.startDownload(from: link) }
         // `-localModel FILE` or `-baseURL URL -model ID` pick the model for `-autorun` without changing the saved default.
         var autorunModel = defaultModel
@@ -1167,6 +1179,16 @@ final class AppModel {
     /// The session of the last Ask pi, to show if its shortcut continues in pi.
     private(set) var askedSession: Int?
 
+    /// The extensions have loaded (`sessions_resumed`): their background checks are known.
+    private var extensionsReady = false
+    private var extensionWaiters: [CheckedContinuation<Void, Never>] = []
+
+    /// Waits until the engine has loaded the extensions (after `open`).
+    func extensionsLoaded() async {
+        if extensionsReady { return }
+        await withCheckedContinuation { extensionWaiters.append($0) }
+    }
+
     /// A shortcut's message: sent to a session (a new one when none is given), and the agent's reply once its run is
     /// done. A session already working gets it when it's done. `show`: pi opens that session (the shortcut runs in pi,
     /// not in the background).
@@ -1653,6 +1675,11 @@ final class AppModel {
             }
             log("open", "extensions loaded, \(resumed.count) resumed")
             updateBackground()
+            extensionsReady = true
+            let waiting = extensionWaiters
+            extensionWaiters.removeAll()
+            for waiter in waiting { waiter.resume() }
+            Task { await BackgroundChecks.shared.refresh(from: engine) }
         case "session_added":
             // A session the engine made (an extension's fork); one the app asked for is already listed.
             if let session = Self.session(from: event["session"] as? [String: Any] ?? [:]), index(of: session.id) == nil {
@@ -1835,6 +1862,7 @@ final class AppModel {
         log("lifecycle", state)
         if state == "background" {
             wentToBackground = true
+            BackgroundChecks.shared.schedule()
             if sessions.contains(where: \.running) { beginBackgroundTask() }
             // iOS refuses GPU work in the background, so an on-device model's reply in progress fails now.
             for session in sessions where session.running && session.model.provider == "ondevice" {

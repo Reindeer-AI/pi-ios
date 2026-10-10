@@ -18,6 +18,8 @@ struct ExtensionsView: View {
     @State private var editingSecret: SecretDraft?
     /// An extension being shared (`SharedExtension.swift`).
     @State private var sharing: SharedFile?
+    /// Extensions' background checks (`BackgroundChecks.swift`).
+    private let checks = BackgroundChecks.shared
 
     /// A secret being added (no `existing`) or changed.
     struct SecretDraft: Identifiable {
@@ -130,6 +132,20 @@ struct ExtensionsView: View {
                 Text("Every session")
             } footer: {
                 Text("Loaded into every session. Off keeps an extension installed without loading it; a session can also leave one out (ask its agent).")
+            }
+
+            if !checks.checks.isEmpty {
+                Section {
+                    ForEach(checks.checks) { check in
+                        BackgroundCheckRow(check: check, run: checks.runs[check.key], running: checks.running.contains(check.key)) {
+                            Task { await checks.run(check) }
+                        }
+                    }
+                } header: {
+                    Text("Background checks")
+                } footer: {
+                    Text("Extensions check for news while pi is in the background, and can notify you. iOS decides when pi wakes up: often every 15 to 60 minutes, less when you rarely use pi, and not in Low Power Mode or after you swipe pi away.")
+                }
             }
 
             if !skills.isEmpty {
@@ -343,6 +359,7 @@ struct ExtensionsView: View {
                 )
             }
             inventory = Inventory(defaults: defaults, sessions: sessions)
+            await checks.refresh(from: app.engine)
             secrets = app.extensionSecrets.entries
             skills = (try await app.engine.command("skills.installed") as? [[String: Any]] ?? []).map {
                 Skill(name: $0["name"] as? String ?? "?", description: $0["description"] as? String ?? "")
@@ -494,4 +511,37 @@ private struct SecretEditor: View {
 private struct ExtensionsError: LocalizedError {
     let errorDescription: String?
     init(_ message: String) { errorDescription = message }
+}
+
+/// A background check in Settings: what it is, how often, its last run, and Run Now.
+private struct BackgroundCheckRow: View {
+    let check: BackgroundChecks.Check
+    let run: BackgroundChecks.Run?
+    let running: Bool
+    let runNow: () -> Void
+
+    var body: some View {
+        HStack(alignment: .top) {
+            VStack(alignment: .leading, spacing: 2) {
+                Text(check.name)
+                Text([check.extensionName, check.description].compactMap { $0 }.joined(separator: " · "))
+                    .font(.caption).foregroundStyle(.secondary).lineLimit(2)
+                Text(status).font(.caption).foregroundStyle(run?.error == nil ? Color.secondary : Color.red).lineLimit(3)
+            }
+            Spacer()
+            if running {
+                ProgressView()
+            } else {
+                Button("Run Now", action: runNow).buttonStyle(.borderless).font(.footnote)
+            }
+        }
+    }
+
+    private var status: String {
+        let every = "Every \(check.every) min"
+        guard let run else { return "\(every) · not run yet" }
+        let when = run.at.formatted(.relative(presentation: .named))
+        if let error = run.error { return "\(every) · \(when): \(error)" }
+        return "\(every) · \(when)" + (run.result.map { ": \($0)" } ?? "")
+    }
 }

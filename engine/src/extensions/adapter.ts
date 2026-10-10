@@ -25,7 +25,7 @@
 import { keysApi } from "../keys.ts";
 import { redact, vaultApi } from "../vault.ts";
 import { syncedApi } from "../synced.ts";
-import { locationApi } from "../device.ts";
+import { locationApi, notifyApi } from "../device.ts";
 import { extensionOf, secretEnv, secretsApi } from "../secrets.ts";
 import type { JsonValue } from "@earendil-works/chord";
 import { BACKGROUND_CONTEXT } from "@earendil-works/chord/context";
@@ -98,9 +98,23 @@ export type Host = {
 };
 
 /** A loaded extension, as the manager keeps it. */
+/**
+ * A background check (`pi.registerCheck`, iOS): code that runs when iOS wakes pi, about every `every` minutes at the
+ * soonest (iOS decides when), for a few seconds, without a session or the model; it can `pi.notify()`. What `run`
+ * returns (a short text) shows in Settings as its last result.
+ */
+export type CheckDefinition = {
+	name: string;
+	description?: string;
+	every: number;
+	run: (context: { signal: AbortSignal }) => unknown;
+};
+
 export interface Adapted {
 	readonly extension: Extension;
 	readonly tools: string[];
+	/** The background checks it registered where no session is involved (a default's first instance). */
+	readonly checks: CheckDefinition[];
 	readonly notes: string[];
 	/**
 	 * Before a prompt is submitted: `input` handlers may rewrite or take it; `before_agent_start` handlers may add
@@ -266,6 +280,7 @@ function durableAdapted(name: string, extensions: Extension[]): Adapted {
 		apps: async () => [],
 		openApp: async () => undefined,
 		offeredApps: [],
+		checks: [],
 		shutdown: async () => {},
 	};
 }
@@ -276,6 +291,8 @@ class Instance {
 	readonly commands = new Map<string, PiCommand>();
 	/** Apps it registered (`pi.registerApp`), by name. */
 	readonly apps = new Map<string, AppDefinition>();
+	/** Background checks it registered (`pi.registerCheck`), by name. */
+	readonly checks = new Map<string, CheckDefinition>();
 	/** Component widgets on screen, by key. */
 	readonly widgets = new Map<string, { close(): void }>();
 	readonly handlers = new Map<string, Handler[]>();
@@ -344,6 +361,10 @@ class PiExtension implements Adapted {
 
 	get tools(): string[] {
 		return [...this.template.tools.keys()];
+	}
+
+	get checks(): CheckDefinition[] {
+		return [...this.template.checks.values()];
 	}
 
 	get offeredApps(): { name: string; title: string; icon: string | null }[] {
@@ -477,6 +498,14 @@ class PiExtension implements Adapted {
 				this.appNames.add(definition.name);
 				instance.apps.set(definition.name, definition);
 			},
+			// pi on iOS: code iOS runs now and then in the background (CheckDefinition).
+			registerCheck: (definition: CheckDefinition) => {
+				if (!definition || typeof definition.name !== "string" || !definition.name || typeof definition.run !== "function") {
+					throw new Error("registerCheck needs a name and a run function");
+				}
+				const every = Math.max(15, Math.round(Number(definition.every) || 60));
+				instance.checks.set(definition.name, { ...definition, every });
+			},
 			apps: this.appsApi(instance),
 			registerShortcut: () => {},
 			registerFlag: () => {},
@@ -523,8 +552,9 @@ class PiExtension implements Adapted {
 			vault: vaultApi(extensionOf(this.name), conversationId),
 			// iOS: values that follow the user to their other devices (synced.ts).
 			synced: syncedApi(extensionOf(this.name)),
-			// iOS: the device's location, once the user allows this extension (device.ts).
+			// iOS: the device's location, and notifications, once the user allows this extension (device.ts).
 			location: locationApi(extensionOf(this.name)),
+			notify: notifyApi(extensionOf(this.name)),
 			events: eventBus(conversationId),
 			getActiveTools: () => [...instance.tools.keys()],
 			getAllTools: () => [...instance.tools.values()].map((tool) => ({ name: tool.name, description: tool.description })),
@@ -575,6 +605,7 @@ class PiExtension implements Adapted {
 			vault: vaultApi(extensionOf(this.name), conversationId),
 			synced: syncedApi(extensionOf(this.name)),
 			location: locationApi(extensionOf(this.name)),
+			notify: notifyApi(extensionOf(this.name)),
 			sessionManager:
 				conversationId === undefined
 					? { getEntries: () => [], getBranch: () => [], getCwd: () => cwd, getSessionId: () => "", getSessionFile: () => undefined, getLeafId: () => null }
