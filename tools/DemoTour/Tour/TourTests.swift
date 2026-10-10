@@ -1313,6 +1313,81 @@ final class TourTests: XCTestCase {
         pause(2)
     }
 
+    /// The App Store screenshots' requests, oldest first (the list shows the newest on top). Each starts with the line its
+    /// session is named after.
+    static let screenshotPrompts = [
+        "Which pi-mono packages have the most TypeScript? Clone https://github.com/badlogic/pi-mono with git (shallow), count the .ts files in each package, and reply with a short markdown table sorted by count.",
+        "Top stories on Hacker News right now? Open news.ycombinator.com in the browser and list the top three with their points, briefly.",
+        "Chart the planets by their number of moons. Use Python to write the data as a CSV, then show a bar chart with show_html: an inline SVG sized for a phone screen, clean and colorful. Reply in one sentence.",
+        "Build me a tip-splitting app. Write a pi extension with an app named Tip Split: the bill amount, a tip slider from 0 to 30%, the number of people, and the total per person, in large iOS-style type that looks right in light and dark mode. Add it to this session and open it.",
+    ]
+
+    /// The App Store screenshots' sessions: a new session for each of `screenshotPrompts`, waited on until the agent is
+    /// done. Run on a simulator whose sessions were cleared (testCleanUpSessions), with a public provider's model as the
+    /// default, so no internal host shows.
+    func testScreenshotSessions() throws {
+        executionTimeAllowance = 40 * 60
+        launchReady()
+        let message = pi.textFields["Message pi"]
+        let stop = pi.buttons["Stop"].firstMatch
+        for prompt in Self.screenshotPrompts {
+            tap(pi.buttons["New session"].firstMatch)
+            pause(1.5)
+            tap(message)
+            message.typeText(prompt)
+            tap(pi.buttons["Send"].firstMatch)
+            _ = stop.waitForExistence(timeout: 30)
+            let end = Date().addingTimeInterval(10 * 60)
+            while stop.exists && Date() < end { pause(2) }
+            pause(3)
+            print("screenshot session done: \(prompt.prefix(48))")
+            if pi.buttons["Minimize"].exists { pi.buttons["Minimize"].firstMatch.tap(); pause(1) }
+            if pi.buttons["Hide keyboard"].exists { pi.buttons["Hide keyboard"].tap() }
+            pi.navigationBars.buttons.element(boundBy: 0).tap()
+            pause(1.5)
+        }
+    }
+
+    /// App Store screenshots, saved to SCREENSHOT_DIR as <iphone|ipad>-<n>-<name>.png: the sessions, the app the agent
+    /// built, its chart, a repository's numbers, and the browser's stories, from testScreenshotSessions' sessions.
+    func testScreenshots() throws {
+        executionTimeAllowance = 10 * 60
+        let folder = try XCTUnwrap(ProcessInfo.processInfo.environment["SCREENSHOT_DIR"], "where to save the screenshots")
+        let pad = UIDevice.current.userInterfaceIdiom == .pad
+        func shot(_ name: String) {
+            let file = URL(fileURLWithPath: folder).appending(path: "\(pad ? "ipad" : "iphone")-\(name).png")
+            try? XCUIScreen.main.screenshot().pngRepresentation.write(to: file)
+            print("screenshot \(file.lastPathComponent)")
+        }
+        func open(_ title: String) {
+            if !pad, !pi.buttons["New session"].isHittable { pi.navigationBars.buttons.element(boundBy: 0).tap(); pause(1.5) }
+            tap(pi.buttons.matching(NSPredicate(format: "label BEGINSWITH %@", title)).firstMatch)
+            pause(3)
+            if pi.buttons["Hide keyboard"].exists { pi.buttons["Hide keyboard"].tap(); pause(0.5) }
+        }
+        launchReady()
+        pause(2)
+        if !pad { shot("1-sessions") }
+
+        open("Build me a tip-splitting app")
+        if !pi.webViews.firstMatch.exists { tap(pi.buttons.matching(NSPredicate(format: "label CONTAINS %@", "Tip Split")).firstMatch) }
+        _ = pi.webViews.firstMatch.waitForExistence(timeout: 20)
+        pause(4)
+        shot(pad ? "1-app" : "2-app")
+        if pi.buttons["Minimize"].exists { pi.buttons["Minimize"].firstMatch.tap(); pause(1.5) }
+
+        open("Chart the planets")
+        _ = pi.webViews.firstMatch.waitForExistence(timeout: 20)
+        pause(3)
+        shot(pad ? "2-chart" : "3-chart")
+
+        open("Which pi-mono packages")
+        shot(pad ? "3-repository" : "4-repository")
+
+        open("Top stories on Hacker News")
+        shot(pad ? "4-browser" : "5-browser")
+    }
+
     /// Settings → About → Acknowledgements: every component's license, searchable, each with its full text.
     func testAcknowledgements() throws {
         launchReady()
