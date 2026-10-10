@@ -401,7 +401,8 @@ final class AppModel {
                 return try await ExtensionPermissions.shared.location(for: requester)
             case "notify":
                 try await ExtensionPermissions.shared.notify(for: requester, title: arguments["title"] as? String ?? "",
-                                                             body: arguments["body"] as? String ?? "")
+                                                             body: arguments["body"] as? String ?? "",
+                                                             session: arguments["session"] as? Int, prompt: arguments["prompt"] as? String)
                 return nil
             default:
                 throw EngineError.unknownMethod("device.\(method)")
@@ -1174,6 +1175,19 @@ final class AppModel {
             return nil
         }
         return result?["submissionId"] as? Int
+    }
+
+    /// A tapped notification from an extension (`pi.notify`): its session opens, and gets its prompt if it has one; a
+    /// prompt with no session (or one deleted since) goes to a new session.
+    func openFromNotification(session: Int?, prompt: String?) async {
+        await start()
+        guard phase == .ready else { return }
+        var id = session.flatMap { index(of: $0) != nil ? $0 : nil }
+        if id == nil, prompt != nil { id = try? await createSession() }
+        guard let id else { return }
+        log("notification", "[\(id)] opened\(prompt == nil ? "" : " with its prompt")")
+        requestedSession = id
+        if let prompt { await send(prompt, to: id) }
     }
 
     /// The session of the last Ask pi, to show if its shortcut continues in pi.

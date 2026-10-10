@@ -89,12 +89,13 @@ final class ExtensionPermissions {
         let question = "\(extensionName)/" + unanswered.map(\.rawValue).joined(separator: "+")
         if let pending = asking[question] { return await pending.value && capabilities.allSatisfy { decision($0, for: extensionName) == true } }
         let task = Task { @MainActor in
-            let allowed = await UserDialog.confirm(
+            // Unanswered stays unanswered when the question couldn't be shown.
+            guard let allowed = await UserDialog.ask(
                 title: "Allow “\(extensionName)” to \(Capability.phrase(unanswered))?",
                 message: "You can change this in Settings → Extensions → \(extensionName).",
                 confirmLabel: "Allow",
                 cancelLabel: "Don’t Allow"
-            )
+            ) else { return false }
             for capability in unanswered { set(capability, for: extensionName, to: allowed) }
             return allowed
         }
@@ -104,8 +105,9 @@ final class ExtensionPermissions {
         return allowed && capabilities.allSatisfy { decision($0, for: extensionName) == true }
     }
 
-    /// Posts a notification from `extensionName` (`pi.notify`), once it may send them and iOS lets pi.
-    func notify(for extensionName: String, title: String, body: String) async throws {
+    /// Posts a notification from `extensionName` (`pi.notify`), once it may send them and iOS lets pi. Tapping it opens
+    /// `session` and sends it `prompt`, or sends `prompt` to a new session (AppModel.openFromNotification).
+    func notify(for extensionName: String, title: String, body: String, session: Int? = nil, prompt: String? = nil) async throws {
         guard await request([.notifications], for: extensionName) else {
             throw AppError.message(decision(.notifications, for: extensionName) == false
                 ? "The user didn't allow \(extensionName) to send notifications"
@@ -125,7 +127,10 @@ final class ExtensionPermissions {
         content.body = body
         content.threadIdentifier = extensionName
         content.sound = .default
-        content.userInfo = ["extension": extensionName]
+        var info: [String: Any] = ["extension": extensionName]
+        if let session { info["session"] = session }
+        if let prompt { info["prompt"] = prompt }
+        content.userInfo = info
         try await center.add(UNNotificationRequest(identifier: UUID().uuidString, content: content, trigger: nil))
     }
 

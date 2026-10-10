@@ -554,7 +554,7 @@ class PiExtension implements Adapted {
 			synced: syncedApi(extensionOf(this.name)),
 			// iOS: the device's location, and notifications, once the user allows this extension (device.ts).
 			location: locationApi(extensionOf(this.name)),
-			notify: notifyApi(extensionOf(this.name)),
+			notify: notifyApi(extensionOf(this.name), conversationId),
 			events: eventBus(conversationId),
 			getActiveTools: () => [...instance.tools.keys()],
 			getAllTools: () => [...instance.tools.values()].map((tool) => ({ name: tool.name, description: tool.description })),
@@ -605,7 +605,7 @@ class PiExtension implements Adapted {
 			vault: vaultApi(extensionOf(this.name), conversationId),
 			synced: syncedApi(extensionOf(this.name)),
 			location: locationApi(extensionOf(this.name)),
-			notify: notifyApi(extensionOf(this.name)),
+			notify: notifyApi(extensionOf(this.name), conversationId),
 			sessionManager:
 				conversationId === undefined
 					? { getEntries: () => [], getBranch: () => [], getCwd: () => cwd, getSessionId: () => "", getSessionFile: () => undefined, getLeafId: () => null }

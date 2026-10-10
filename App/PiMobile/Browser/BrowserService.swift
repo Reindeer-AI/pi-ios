@@ -798,11 +798,17 @@ enum UserDialog {
     }
 
     static func confirm(title: String, message: String, confirmLabel: String, cancelLabel: String = "Cancel") async -> Bool {
+        await ask(title: title, message: message, confirmLabel: confirmLabel, cancelLabel: cancelLabel) ?? false
+    }
+
+    /// Like `confirm`, but nil when there was nowhere to show the question, so a caller that records answers doesn't
+    /// take that for a no.
+    static func ask(title: String, message: String, confirmLabel: String, cancelLabel: String = "Cancel") async -> Bool? {
         await withCheckedContinuation { continuation in
             let alert = UIAlertController(title: title, message: message, preferredStyle: .alert)
             alert.addAction(UIAlertAction(title: cancelLabel, style: .cancel) { _ in continuation.resume(returning: false) })
             alert.addAction(UIAlertAction(title: confirmLabel, style: .default) { _ in continuation.resume(returning: true) })
-            present(alert) { continuation.resume(returning: false) }
+            present(alert) { continuation.resume(returning: nil) }
         }
     }
 
@@ -818,13 +824,18 @@ enum UserDialog {
         }
     }
 
-    /// Presents on the top-most view controller; `unavailable` runs when there is no window to present on.
-    private static func present(_ alert: UIAlertController, unavailable: () -> Void) {
+    /// Presents on the top-most view controller, once it isn't in the middle of a transition (a sheet closing, a screen
+    /// being pushed or popped), which would drop the alert; `unavailable` runs when there's no window to present on.
+    private static func present(_ alert: UIAlertController, attempt: Int = 0, unavailable: @escaping () -> Void) {
         let scenes = UIApplication.shared.connectedScenes.compactMap { $0 as? UIWindowScene }
         let scene = scenes.first { $0.activationState == .foregroundActive } ?? scenes.first
-        var top = scene?.keyWindow?.rootViewController
-        while let presented = top?.presentedViewController { top = presented }
-        guard let top else { return unavailable() }
+        var top = (scene?.keyWindow ?? scene?.windows.first { !$0.isHidden })?.rootViewController
+        while let presented = top?.presentedViewController, !presented.isBeingDismissed { top = presented }
+        guard let top, top.transitionCoordinator == nil, !top.isBeingPresented, !top.isBeingDismissed else {
+            guard attempt < 15 else { return unavailable() }
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) { present(alert, attempt: attempt + 1, unavailable: unavailable) }
+            return
+        }
         top.present(alert, animated: true)
     }
 }

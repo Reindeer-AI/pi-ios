@@ -30,6 +30,14 @@ final class AppDelegate: NSObject, UIApplicationDelegate, UNUserNotificationCent
         return true
     }
 
+    /// A tap on an extension's notification opens its session, or a new one with its prompt.
+    nonisolated func userNotificationCenter(_ center: UNUserNotificationCenter, didReceive response: UNNotificationResponse) async {
+        let info = response.notification.request.content.userInfo
+        let session = info["session"] as? Int
+        let prompt = info["prompt"] as? String
+        await AppModel.shared?.openFromNotification(session: session, prompt: prompt)
+    }
+
     /// Extensions' notifications show while pi is open too.
     nonisolated func userNotificationCenter(_ center: UNUserNotificationCenter, willPresent notification: UNNotification) async -> UNNotificationPresentationOptions {
         [.banner, .list, .sound]

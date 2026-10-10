@@ -1712,6 +1712,79 @@ final class TourTests: XCTestCase {
         pause(2)
     }
 
+    /// Tapping an extension's notification (Fixtures/checktest.ts, from SHARED_FILE): one posted from a session (/notifyme)
+    /// opens that session from the sessions list; one with a prompt (/notifyask) opens it and sends it the prompt; one
+    /// with session "new" and a prompt (/notifyprompt) opens a new session that gets it.
+    func testNotificationTap() throws {
+        executionTimeAllowance = 6 * 60
+        let springboard = XCUIApplication(bundleIdentifier: "com.apple.springboard")
+        dismissShortcutLeftovers(springboard)
+        let path = try XCTUnwrap(ProcessInfo.processInfo.environment["SHARED_FILE"], "the test extension's .piext")
+        pi.launchArguments += ["-openSharedFile", path]
+        launchReady()
+        tap(pi.buttons["Add to Every Session"].firstMatch)
+        pause(2)
+        if pi.buttons["Done"].exists { pi.buttons["Done"].firstMatch.tap() }
+        let message = pi.textFields["Message pi"]
+        func send(_ text: String) {
+            tap(message)
+            message.typeText(text)
+            tap(pi.buttons["Send"].firstMatch)
+        }
+        // Answers pi's question about the extension's notifications, and iOS's for pi, when they come.
+        func allowNotifications() {
+            let ask = pi.alerts["Allow “checktest” to send you notifications?"]
+            if ask.waitForExistence(timeout: 8) { ask.buttons["Allow"].tap() }
+            let system = springboard.alerts.firstMatch
+            if system.waitForExistence(timeout: 3) { system.buttons["Allow"].tap() }
+        }
+        func banner(_ text: String) -> XCUIElement {
+            springboard.descendants(matching: .any).matching(NSPredicate(format: "label CONTAINS %@", text)).firstMatch
+        }
+
+        tap(pi.buttons["New session"].firstMatch)
+        pause(1.5)
+        send("!echo marker for notifyme")
+        XCTAssertTrue(pi.staticTexts.matching(NSPredicate(format: "label BEGINSWITH %@", "echo marker for notifyme")).firstMatch
+            .waitForExistence(timeout: 20), "the session's command")
+        send("/notifyme")
+        if pi.buttons["Hide keyboard"].exists { pi.buttons["Hide keyboard"].tap() }
+        backToSessions()
+        allowNotifications()
+        let back = banner("Back to the session")
+        XCTAssertTrue(back.waitForExistence(timeout: 20), "the notification")
+        back.tap()
+        let marker = pi.staticTexts.matching(NSPredicate(format: "label BEGINSWITH %@", "echo marker for notifyme")).firstMatch
+        XCTAssertTrue(marker.waitForExistence(timeout: 20), "tapping it opened its session")
+        pause(2)
+
+        send("/notifyask")
+        if pi.buttons["Hide keyboard"].exists { pi.buttons["Hide keyboard"].tap() }
+        backToSessions()
+        let here = banner("Tap to ask here")
+        XCTAssertTrue(here.waitForExistence(timeout: 20), "the notification with a prompt for its session")
+        here.tap()
+        XCTAssertTrue(pi.staticTexts.matching(NSPredicate(format: "label CONTAINS %@", "Reply with exactly the word here")).firstMatch
+            .waitForExistence(timeout: 20), "its session got the message")
+        XCTAssertTrue(marker.exists, "the same session")
+        XCTAssertTrue(pi.staticTexts.matching(NSPredicate(format: "label ==[c] %@", "here")).firstMatch.waitForExistence(timeout: 120),
+                      "the agent answered it there")
+        pause(2)
+
+        send("/notifyprompt")
+        if pi.buttons["Hide keyboard"].exists { pi.buttons["Hide keyboard"].tap() }
+        backToSessions()
+        let ask = banner("Tap to ask pi")
+        XCTAssertTrue(ask.waitForExistence(timeout: 20), "the notification with a prompt")
+        ask.tap()
+        let prompt = pi.staticTexts.matching(NSPredicate(format: "label CONTAINS %@", "Reply with exactly the word tapped")).firstMatch
+        XCTAssertTrue(prompt.waitForExistence(timeout: 20), "a new session with its message")
+        XCTAssertFalse(marker.exists, "not the earlier session")
+        XCTAssertTrue(pi.staticTexts.matching(NSPredicate(format: "label ==[c] %@", "tapped")).firstMatch.waitForExistence(timeout: 120),
+                      "the agent answered it")
+        pause(2)
+    }
+
     /// Opening a shared session (-openSharedFile, set by the shell to a .pisession in the app's tmp): the sheet, then the
     /// session, opened as a new one with its history.
     func testOpenSharedSession() throws {
