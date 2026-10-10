@@ -1883,7 +1883,11 @@ final class AppModel {
                 localRunsInBackground.insert(session.id)
             }
         }
-        if state == "active" { endBackgroundTask() }
+        if state == "active" {
+            endBackgroundTask()
+            // What background checks wanted to ask while pi couldn't.
+            Task { await ExtensionPermissions.shared.askPending() }
+        }
         if state == "active", wentToBackground {
             wentToBackground = false
             // MCP connections the phone dropped while away reconnect now, before the agent needs them.

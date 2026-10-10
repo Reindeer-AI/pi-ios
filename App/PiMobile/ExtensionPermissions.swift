@@ -53,6 +53,8 @@ final class ExtensionPermissions {
     }
 
     private static let key = "extensionPermissions"
+    /// Questions a background run couldn't ask ("extension": [capability]), asked the next time pi is open.
+    private static let pendingKey = "extensionPermissionsPending"
     /// Questions on screen, so a page asking twice at once gets one question.
     private var asking: [String: Task<Bool, Never>] = [:]
 
@@ -85,7 +87,12 @@ final class ExtensionPermissions {
     func request(_ capabilities: [Capability], for extensionName: String) async -> Bool {
         let unanswered = capabilities.filter { decision($0, for: extensionName) == nil }
         if unanswered.isEmpty { return capabilities.allSatisfy { decision($0, for: extensionName) == true } }
-        guard UIApplication.shared.applicationState == .active else { return false }
+        guard UIApplication.shared.applicationState == .active else {
+            var pending = UserDefaults.standard.dictionary(forKey: Self.pendingKey) as? [String: [String]] ?? [:]
+            pending[extensionName] = Array(Set((pending[extensionName] ?? []) + unanswered.map(\.rawValue))).sorted()
+            UserDefaults.standard.set(pending, forKey: Self.pendingKey)
+            return false
+        }
         let question = "\(extensionName)/" + unanswered.map(\.rawValue).joined(separator: "+")
         if let pending = asking[question] { return await pending.value && capabilities.allSatisfy { decision($0, for: extensionName) == true } }
         let task = Task { @MainActor in
@@ -105,6 +112,27 @@ final class ExtensionPermissions {
         return allowed && capabilities.allSatisfy { decision($0, for: extensionName) == true }
     }
 
+    /// Asks iOS to let pi notify, if it hasn't asked yet: until pi asks once, iOS doesn't list pi in Settings →
+    /// Notifications. Only while pi is in front.
+    func askSystemNotifications() async {
+        guard UIApplication.shared.applicationState == .active,
+              await UNUserNotificationCenter.current().notificationSettings().authorizationStatus == .notDetermined else { return }
+        _ = try? await UNUserNotificationCenter.current().requestAuthorization(options: [.alert, .sound, .badge])
+    }
+
+    /// Asks the questions background runs couldn't (pi has come to the front), one extension at a time.
+    func askPending() async {
+        let pending = UserDefaults.standard.dictionary(forKey: Self.pendingKey) as? [String: [String]] ?? [:]
+        guard !pending.isEmpty else { return }
+        UserDefaults.standard.removeObject(forKey: Self.pendingKey)
+        for (extensionName, names) in pending.sorted(by: { $0.key < $1.key }) {
+            let capabilities = names.compactMap(Capability.init(rawValue:)).filter { decision($0, for: extensionName) == nil }
+            guard !capabilities.isEmpty else { continue }
+            // Allowed notifications need iOS's permission for pi too, asked now that pi is in front.
+            if await request(capabilities, for: extensionName), capabilities.contains(.notifications) { await askSystemNotifications() }
+        }
+    }
+
     /// Posts a notification from `extensionName` (`pi.notify`), once it may send them and iOS lets pi. Tapping it opens
     /// `session` and sends it `prompt`, or sends `prompt` to a new session (AppModel.openFromNotification).
     func notify(for extensionName: String, title: String, body: String, session: Int? = nil, prompt: String? = nil) async throws {
@@ -114,10 +142,7 @@ final class ExtensionPermissions {
                 : "\(extensionName) may send notifications once the user allows it, which pi asks the next time it's open")
         }
         let center = UNUserNotificationCenter.current()
-        if await center.notificationSettings().authorizationStatus == .notDetermined,
-           UIApplication.shared.applicationState == .active {
-            _ = try? await center.requestAuthorization(options: [.alert, .sound, .badge])
-        }
+        await askSystemNotifications()
         switch await center.notificationSettings().authorizationStatus {
         case .authorized, .provisional, .ephemeral: break
         default: throw AppError.message("pi may not send notifications: Settings → Notifications → pi")

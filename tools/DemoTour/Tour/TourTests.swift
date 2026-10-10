@@ -1612,15 +1612,15 @@ final class TourTests: XCTestCase {
         XCTAssertTrue(row.waitForExistence(timeout: 15), "permtest among the extensions")
         for _ in 0..<5 where !row.isHittable { pi.swipeUp(); pause(0.5) }
         tap(row)
-        let micSwitch = pi.switches["Microphone"].firstMatch
-        let locationSwitch = pi.switches["Location"].firstMatch
-        XCTAssertTrue(locationSwitch.waitForExistence(timeout: 10), "its Permissions")
-        print("permissions: microphone \(micSwitch.value ?? "?"), location \(locationSwitch.value ?? "?")")
-        XCTAssertEqual(micSwitch.value as? String, "1")
-        XCTAssertEqual(locationSwitch.value as? String, "0")
-        locationSwitch.switches.firstMatch.exists ? locationSwitch.switches.firstMatch.tap() : locationSwitch.tap()
-        pause(1)
-        XCTAssertEqual(locationSwitch.value as? String, "1", "allowed in Settings")
+        let micRow = permissionRow("Microphone")
+        let locationRow = permissionRow("Location")
+        XCTAssertTrue(locationRow.waitForExistence(timeout: 10), "its Permissions")
+        print("permissions: \(micRow.label); \(locationRow.label)")
+        XCTAssertTrue(micRow.label.hasSuffix("Allow") && !micRow.label.hasSuffix("Don’t Allow"), "the microphone allowed")
+        XCTAssertTrue(locationRow.label.hasSuffix("Don’t Allow"), "the location refused")
+        setPermission(locationRow, to: "Allow")
+        XCTAssertTrue(permissionRow("Location").label.hasSuffix("Allow") && !permissionRow("Location").label.hasSuffix("Don’t Allow"),
+                      "allowed in Settings")
         pause(1)
         // Back to Settings, and out.
         for _ in 0..<3 where !pi.buttons["Done"].exists {
@@ -1709,6 +1709,41 @@ final class TourTests: XCTestCase {
         XCTAssertTrue(again.waitForExistence(timeout: 60), "the notification from the launch's run")
         print("notification again: \(again.label)")
         XCTAssertFalse(pi.alerts.firstMatch.exists, "no question this time")
+        pause(2)
+    }
+
+    /// Notifications allowed ahead of time in an extension's Settings (Fixtures/checktest.ts, from SHARED_FILE): its
+    /// Permissions list every permission as Ask; set to Allow, Run Now notifies without a question.
+    func testAllowNotificationsAhead() throws {
+        executionTimeAllowance = 4 * 60
+        let springboard = XCUIApplication(bundleIdentifier: "com.apple.springboard")
+        dismissShortcutLeftovers(springboard)
+        let path = try XCTUnwrap(ProcessInfo.processInfo.environment["SHARED_FILE"], "the test extension's .piext")
+        pi.launchArguments += ["-openSharedFile", path]
+        launchReady()
+        tap(pi.buttons["Add to Every Session"].firstMatch)
+        pause(2)
+        if pi.buttons["Done"].exists { pi.buttons["Done"].firstMatch.tap() }
+        tap(pi.buttons["Settings"])
+        tap(pi.buttons["Extensions and skills"].firstMatch)
+        let row = pi.staticTexts.matching(NSPredicate(format: "label BEGINSWITH %@", "checktest")).firstMatch
+        XCTAssertTrue(row.waitForExistence(timeout: 15), "checktest among the extensions")
+        for _ in 0..<5 where !row.isHittable { pi.swipeUp(); pause(0.5) }
+        tap(row)
+        let notifications = permissionRow("Notifications")
+        XCTAssertTrue(notifications.waitForExistence(timeout: 10), "every permission listed, asked or not")
+        print("before: \(notifications.label)")
+        XCTAssertTrue(notifications.label.hasSuffix("Ask"), "not asked yet")
+        setPermission(notifications, to: "Allow")
+        print("after: \(permissionRow("Notifications").label)")
+        pi.navigationBars.buttons.element(boundBy: 0).tap()
+        pause(1)
+        let runNow = pi.buttons["Run Now"].firstMatch
+        for _ in 0..<12 where !(runNow.exists && runNow.isHittable) { pi.swipeUp(); pause(0.7) }
+        tap(runNow)
+        let banner = springboard.descendants(matching: .any).matching(NSPredicate(format: "label CONTAINS %@", "Background check ran at")).firstMatch
+        XCTAssertTrue(banner.waitForExistence(timeout: 20), "the notification")
+        XCTAssertFalse(pi.alerts.firstMatch.exists, "no question: allowed ahead")
         pause(2)
     }
 
@@ -1999,6 +2034,17 @@ final class TourTests: XCTestCase {
             }
             pause(1)
         }
+    }
+
+    /// A permission's row in an extension's Settings (its menu: Ask, Allow, Don't Allow), labeled with the answer.
+    private func permissionRow(_ title: String) -> XCUIElement {
+        pi.buttons.matching(NSPredicate(format: "label BEGINSWITH %@", "\(title), ")).firstMatch
+    }
+
+    private func setPermission(_ row: XCUIElement, to answer: String) {
+        tap(row)
+        tap(pi.buttons[answer].firstMatch)
+        pause(1)
     }
 
     /// From a session (pi may reopen on the last one shown) back to the sessions list.

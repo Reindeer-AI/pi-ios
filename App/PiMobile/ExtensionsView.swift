@@ -390,8 +390,8 @@ private struct ExtensionDetailView: View {
     var share: (() -> Void)?
     /// Its files, to read and change (`ExtensionSourceView.swift`).
     var source: (() -> ExtensionSourceView)?
-    /// What it was allowed or refused on this device (`ExtensionPermissions.swift`).
-    @State private var permissions: [(ExtensionPermissions.Capability, Bool)] = []
+    /// What it was allowed or refused on this device, nil for not asked yet (`ExtensionPermissions.swift`).
+    @State private var permissions: [ExtensionPermissions.Capability: Bool] = [:]
     @Environment(\.dismiss) private var dismiss
 
     var body: some View {
@@ -412,21 +412,25 @@ private struct ExtensionDetailView: View {
             if !item.notes.isEmpty {
                 Section("Notes") { ForEach(item.notes, id: \.self) { Text($0).font(.footnote) } }
             }
-            if !permissions.isEmpty {
-                Section {
-                    ForEach(permissions, id: \.0) { capability, allowed in
-                        Toggle(isOn: Binding(get: { allowed }, set: { on in
-                            ExtensionPermissions.shared.set(capability, for: item.name, to: on)
-                            permissions = ExtensionPermissions.shared.decisions(for: item.name)
-                        })) {
-                            Label(capability.title, systemImage: capability.systemImage)
-                        }
+            Section {
+                ForEach(ExtensionPermissions.Capability.allCases) { capability in
+                    Picker(selection: Binding(get: { permissions[capability] }, set: { answer in
+                        ExtensionPermissions.shared.set(capability, for: item.name, to: answer)
+                        loadPermissions()
+                        // Allowed ahead of time: iOS's permission for pi, asked now rather than in the background.
+                        if capability == .notifications, answer == true { Task { await ExtensionPermissions.shared.askSystemNotifications() } }
+                    })) {
+                        Text("Ask").tag(Bool?.none)
+                        Text("Allow").tag(Bool?.some(true))
+                        Text("Don’t Allow").tag(Bool?.some(false))
+                    } label: {
+                        Label(capability.title, systemImage: capability.systemImage)
                     }
-                } header: {
-                    Text("Permissions")
-                } footer: {
-                    Text("pi asks the first time it wants each. iOS also asks once for pi itself (Settings → Apps → pi).")
                 }
+            } header: {
+                Text("Permissions")
+            } footer: {
+                Text("Ask: pi asks the first time it wants it (if that's in the background, the next time pi is open). iOS also asks once for pi itself.")
             }
             Section {
                 if let source {
@@ -448,7 +452,11 @@ private struct ExtensionDetailView: View {
             }
         }
         .navigationTitle(item.name)
-        .onAppear { permissions = ExtensionPermissions.shared.decisions(for: item.name) }
+        .onAppear { loadPermissions() }
+    }
+
+    private func loadPermissions() {
+        permissions = Dictionary(uniqueKeysWithValues: ExtensionPermissions.shared.decisions(for: item.name).map { ($0.0, $0.1) })
     }
 }
 
