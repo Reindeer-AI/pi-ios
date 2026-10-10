@@ -37,6 +37,16 @@ for name in files text shell awk curl_ios tar dash lg2 openssl libssh2; do
   fi
   rm -rf "$FRAMEWORKS/$name.framework"
   cp -R "$slice$name.framework" "$FRAMEWORKS/"
+  # App Store validation wants each framework's platform in its Info.plist (a-Shell's openssl leaves it out) and only
+  # the architectures the app is built for (libssh2 also carries arm64e).
+  plist="$FRAMEWORKS/$name.framework/Info.plist"
+  if [ "$PLATFORM_NAME" = "iphoneos" ] && ! /usr/libexec/PlistBuddy -c "Print :CFBundleSupportedPlatforms" "$plist" >/dev/null 2>&1; then
+    /usr/libexec/PlistBuddy -c "Add :CFBundleSupportedPlatforms array" -c "Add :CFBundleSupportedPlatforms:0 string iPhoneOS" "$plist"
+  fi
+  binary="$FRAMEWORKS/$name.framework/$name"
+  for arch in $(lipo -archs "$binary"); do
+    case " $ARCHS " in *" $arch "*) ;; *) lipo -remove "$arch" "$binary" -output "$binary" ;; esac
+  done
   codesign --force --sign "${EXPANDED_CODE_SIGN_IDENTITY:--}" --timestamp=none "$FRAMEWORKS/$name.framework"
 done
 

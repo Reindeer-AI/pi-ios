@@ -9,7 +9,7 @@ import PackageDescription
 // - LlamaServer (llama.cpp's llama-server as a static library; run `./build-llama.sh` first).
 let package = Package(
     name: "AShell",
-    platforms: [.iOS(.v17)],
+    platforms: [.iOS("26.0")],
     products: [
         .library(name: "ios_system", targets: ["ios_system"]),
         .library(name: "LlamaServerSupport", targets: ["LlamaServerSupport"]),

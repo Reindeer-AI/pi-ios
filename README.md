@@ -40,7 +40,7 @@ scripts/        build-ipa.sh: a signed .ipa
 
 ## Building
 
-You need a Mac with Xcode 26, Node 22 and Homebrew's `automake`.
+You need a Mac with Xcode 26, Node 22 and Homebrew's `automake`. pi runs on iOS and iPadOS 26 or later.
 
 ```sh
 # Native components (once; they go to Vendor/, which git ignores)

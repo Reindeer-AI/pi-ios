@@ -6,7 +6,8 @@ import Foundation
 /// pi-durable resumes the run on the next launch in that case.
 @MainActor
 final class BackgroundRun {
-    static let identifierPrefix = "dev.pimobile.PiMobile.run"
+    /// Under the app's bundle ID, as `BGTaskSchedulerPermittedIdentifiers` declares (`$(PRODUCT_BUNDLE_IDENTIFIER).run.*`).
+    static let identifierPrefix = "\(Bundle.main.bundleIdentifier ?? "dev.pimobile.PiMobile").run"
 
     private let log: (String, String) -> Void
     private var task: AnyObject?
@@ -18,7 +19,6 @@ final class BackgroundRun {
 
     /// Asks the system to keep running while a run is in progress.
     func begin(title: String) {
-        guard #available(iOS 26, *) else { return }
         end(success: false)
         // `-noBackgroundTask YES` measures the baseline: what happens to a run in the background without this task.
         guard !UserDefaults.standard.bool(forKey: "noBackgroundTask") else {
@@ -46,21 +46,20 @@ final class BackgroundRun {
 
     /// Reports progress; the system ends tasks that stop reporting first.
     func progress(_ subtitle: String) {
-        guard #available(iOS 26, *), let task = task as? BGContinuedProcessingTask else { return }
+        guard let task = task as? BGContinuedProcessingTask else { return }
         completedUnits = min(completedUnits + 1, task.progress.totalUnitCount - 1)
         task.progress.completedUnitCount = completedUnits
         task.updateTitle(task.title, subtitle: subtitle)
     }
 
     func end(success: Bool) {
-        guard #available(iOS 26, *), let task = task as? BGContinuedProcessingTask else { return }
+        guard let task = task as? BGContinuedProcessingTask else { return }
         task.progress.completedUnitCount = task.progress.totalUnitCount
         task.setTaskCompleted(success: success)
         self.task = nil
         log("background", "continued processing ended (success: \(success))")
     }
 
-    @available(iOS 26, *)
     private func attach(_ task: BGTask) {
         guard let task = task as? BGContinuedProcessingTask else { return }
         self.task = task

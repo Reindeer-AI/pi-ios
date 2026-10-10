@@ -5,7 +5,7 @@
 	<!-- iOS 26 continued processing for user-started runs (BackgroundRun.swift). -->
 	<key>BGTaskSchedulerPermittedIdentifiers</key>
 	<array>
-		<string>dev.pimobile.PiMobile.run.*</string>
+		<string>$(PRODUCT_BUNDLE_IDENTIFIER).run.*</string>
 	</array>
 	<!-- The OAuth app for Settings → GitHub's device login (GitHubService). A client ID is not a secret. -->
 	<key>PIGitHubClientID</key>

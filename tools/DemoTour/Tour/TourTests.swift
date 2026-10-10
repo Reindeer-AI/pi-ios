@@ -1313,6 +1313,24 @@ final class TourTests: XCTestCase {
         pause(2)
     }
 
+    /// Settings → About → Acknowledgements: every component's license, searchable, each with its full text.
+    func testAcknowledgements() throws {
+        launchReady()
+        tap(pi.buttons["Settings"])
+        let link = pi.buttons["Acknowledgements"].firstMatch
+        for _ in 0..<8 where !link.isHittable { pi.swipeUp(); pause(0.5) }
+        tap(link)
+        let first = pi.buttons.matching(NSPredicate(format: "label BEGINSWITH %@", "ios_system")).firstMatch
+        XCTAssertTrue(first.waitForExistence(timeout: 10), "the components")
+        let search = pi.searchFields.firstMatch
+        tap(search)
+        search.typeText("curl")
+        tap(pi.buttons.matching(NSPredicate(format: "label BEGINSWITH %@", "curl")).firstMatch)
+        let text = pi.staticTexts.matching(NSPredicate(format: "label CONTAINS %@", "COPYRIGHT AND PERMISSION NOTICE")).firstMatch
+        XCTAssertTrue(text.waitForExistence(timeout: 10), "curl's license text")
+        pause(1)
+    }
+
     /// An extension's source in Settings → Extensions: its files listed, one opened, changed and saved (the extension
     /// loads again), then changed back.
     func testExtensionSource() throws {

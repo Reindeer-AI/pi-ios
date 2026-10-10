@@ -22,7 +22,7 @@ final class ModelStore: NSObject {
 
     /// Models are kept out of the user-visible Documents folder and excluded from backups.
     nonisolated static let directory = URL.applicationSupportDirectory.appending(path: "models", directoryHint: .isDirectory)
-    private static let sessionIdentifier = "dev.pimobile.PiMobile.models"
+    private static let sessionIdentifier = "\(Bundle.main.bundleIdentifier ?? "dev.pimobile.PiMobile").models"
 
     private(set) var models: [String] = []
     private(set) var download: Download?

@@ -126,6 +126,16 @@ const result = await build({
 // esbuild (WebAssembly) transpiles extension code at run time (src/extensions/runtime.ts).
 await copyFile(new URL("./node_modules/esbuild-wasm/esbuild.wasm", import.meta.url), new URL("esbuild.wasm", outdir));
 
+// The npm packages the bundle has (their folders), for the app's acknowledgements (scripts/acknowledgements.mjs).
+{
+	const folders = new Set(["node_modules/esbuild-wasm"]);
+	for (const file of Object.keys(result.metafile.inputs)) {
+		const match = /^(.*node_modules\/(?:@[^/]+\/)?[^/]+)\//.exec(file);
+		if (match) folders.add(match[1]);
+	}
+	await writeFile(new URL("bundled-packages.json", outdir), `${JSON.stringify([...folders].sort(), null, "\t")}\n`);
+}
+
 await writeFile(
 	new URL("index.html", outdir),
 	`<!doctype html>

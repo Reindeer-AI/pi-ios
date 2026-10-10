@@ -1,6 +1,8 @@
 # Third-party components
 
-pi for iOS bundles or builds on the following. Each keeps its own license; see the linked projects for the full texts.
+pi for iOS bundles or builds on the following. Each keeps its own license; the app shows every full text in Settings →
+About → Acknowledgements (App/PiMobile/Acknowledgements.json, written by `scripts/acknowledgements.mjs`; run it again
+when a dependency changes).
 
 | Component | Use | License |
 | --- | --- | --- |

@@ -1658,6 +1658,7 @@ private struct SettingsView: View {
                     }
                     LabeledContent("Version", value: Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "")
                     LabeledContent("Engine") { Text(app.environment).font(.footnote) }
+                    NavigationLink("Acknowledgements") { AcknowledgementsView() }
                 }
             }
             .navigationTitle("Settings")

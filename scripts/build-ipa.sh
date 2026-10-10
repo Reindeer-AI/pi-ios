@@ -9,8 +9,9 @@
 #   PI_TEAM=<team id> scripts/build-ipa.sh --safari-identity → the browser identifies as Safari (some sites, Google's
 #                                                               sign-in among them, refuse other browsers)
 #
-# PI_TEAM is the Apple developer team that signs it; PI_VERSION its version (default 0.1.<commit count>; an MDM or
-# TestFlight needs it higher on every upload). Ad hoc and development builds install only on iPhones registered to the
+# PI_TEAM is the Apple developer team that signs it; PI_VERSION its version (default 0.1.<commit count>; an MDM needs
+# it higher on every upload), PI_BUILD its build number (default PI_VERSION; App Store Connect needs it higher on every
+# upload of a version), and PI_BUNDLE_ID its bundle identifier (default dev.pimobile.PiMobile). Ad hoc and development builds install only on iPhones registered to the
 # team (developer.apple.com → Certificates, IDs & Profiles → Devices) and in its profile. Without a profile, Xcode makes
 # or updates profiles through the Apple account signed in to it.
 set -euo pipefail
@@ -18,6 +19,10 @@ set -euo pipefail
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 TEAM="${PI_TEAM:?set PI_TEAM to the Apple developer team that signs the app}"
 VERSION="${PI_VERSION:-0.1.$(git -C "$ROOT" rev-list --count HEAD)}"
+BUILD_NUMBER="${PI_BUILD:-$VERSION}"
+# The app target reads it from PI_BUNDLE_ID, as the profile below: given to every target, it would rename the package
+# targets' resource bundles too.
+BUNDLE_ID="${PI_BUNDLE_ID:-dev.pimobile.PiMobile}"
 CONDITIONS='$(inherited)'
 METHOD=release-testing
 PROFILE=""
@@ -78,7 +83,8 @@ xcodebuild archive \
 	-destination 'generic/platform=iOS' \
 	-archivePath "$BUILD/PiMobile.xcarchive" -derivedDataPath "$BUILD/DerivedData" \
 	${UPDATES[@]+"${UPDATES[@]}"} \
-	DEVELOPMENT_TEAM="$TEAM" MARKETING_VERSION="$VERSION" CURRENT_PROJECT_VERSION="$VERSION" \
+	DEVELOPMENT_TEAM="$TEAM" MARKETING_VERSION="$VERSION" CURRENT_PROJECT_VERSION="$BUILD_NUMBER" \
+	PI_BUNDLE_ID="$BUNDLE_ID" \
 	SWIFT_ACTIVE_COMPILATION_CONDITIONS="$CONDITIONS" ${SIGNING[@]+"${SIGNING[@]}"}
 
 cat > "$BUILD/ExportOptions.plist" <<EOF
@@ -97,7 +103,7 @@ $(if [[ -n "$PROFILE" ]]; then cat <<SIGNING
 	<string>$IDENTITY</string>
 	<key>provisioningProfiles</key>
 	<dict>
-		<key>dev.pimobile.PiMobile</key>
+		<key>$BUNDLE_ID</key>
 		<string>$PROFILE_NAME</string>
 	</dict>
 SIGNING
@@ -106,8 +112,17 @@ else cat <<SIGNING
 	<string>automatic</string>
 SIGNING
 fi)
+$(if [[ "$METHOD" == app-store-connect ]]; then cat <<STORE
+	<key>uploadSymbols</key>
+	<true/>
+	<key>manageAppVersionAndBuildNumber</key>
+	<false/>
+STORE
+else cat <<THINNING
 	<key>thinning</key>
 	<string>&lt;none&gt;</string>
+THINNING
+fi)
 </dict>
 </plist>
 EOF
