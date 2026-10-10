@@ -7,7 +7,7 @@ import AppIntents
 struct AskPiIntent: AppIntent {
     static let title: LocalizedStringResource = "Ask pi"
     static let description = IntentDescription(
-        "Sends a message to pi, in a new session or one you choose, and gives back pi's reply once the agent is done.",
+        "Sends a message to pi, in a new session or one you choose, and gives back pi's reply once the agent is done, for the next action (Speak Text, Show Result, …).",
         categoryName: "Sessions"
     )
     /// In the background for a short question; in pi (asked for, `continueInForeground`) for a long one.
@@ -25,9 +25,9 @@ struct AskPiIntent: AppIntent {
         Summary("Ask pi \(\.$message) in \(\.$session)")
     }
 
-    /// The reply, as the action's output and, run on its own (Siri, the Shortcuts app's pi actions), shown or spoken.
+    /// The reply, as the action's output only: the shortcut decides what to do with it (Speak Text, Show Result, …).
     @MainActor
-    func perform() async throws -> some IntentResult & ReturnsValue<String> & ProvidesDialog {
+    func perform() async throws -> some IntentResult & ReturnsValue<String> {
         guard let app = AppModel.shared else { throw AppError.message("pi isn't running.") }
         let message = message, sessionId = session?.id
         let background = systemContext.currentMode == .background
@@ -36,8 +36,7 @@ struct AskPiIntent: AppIntent {
             try await continueInForeground(IntentDialog("pi is still working on it. Open pi to see it finish?"), alwaysConfirm: false)
             if let id = app.askedSession { app.requestedSession = id }
         }
-        let reply = try await asking.value
-        return .result(value: reply, dialog: IntentDialog(stringLiteral: reply.isEmpty ? "Done." : reply))
+        return .result(value: try await asking.value)
     }
 
     /// Whether `task` ends within `duration` (it keeps running either way).
