@@ -10,11 +10,15 @@
 		A1000000000000000000000B /* PiEngineKit in Frameworks */ = {isa = PBXBuildFile; productRef = A1000000000000000000000D /* PiEngineKit */; };
 		A10000000000000000000015 /* ios_system in Frameworks */ = {isa = PBXBuildFile; productRef = A10000000000000000000017 /* ios_system */; };
 		A10000000000000000000019 /* LlamaServerSupport in Frameworks */ = {isa = PBXBuildFile; productRef = A1000000000000000000001A /* LlamaServerSupport */; };
+		A20000000000000000000001 = {isa = PBXBuildFile; productRef = A20000000000000000000002; };
+		A20000000000000000000003 = {isa = PBXBuildFile; productRef = A20000000000000000000004; };
+		A20000000000000000000005 = {isa = PBXBuildFile; fileRef = A20000000000000000000006; settings = {ATTRIBUTES = (RemoveHeadersOnCopy, ); }; };
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
 		A10000000000000000000004 /* PiMobile.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = PiMobile.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		A10000000000000000000014 /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; path = Info.plist; sourceTree = "<group>"; };
+		A20000000000000000000006 /* PiWatch.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = PiWatch.app; sourceTree = BUILT_PRODUCTS_DIR; };
 /* End PBXFileReference section */
 
 /* Begin PBXFileSystemSynchronizedRootGroup section */
@@ -23,6 +27,7 @@
 			path = PiMobile;
 			sourceTree = "<group>";
 		};
+		A20000000000000000000007 /* PiWatch */ = {isa = PBXFileSystemSynchronizedRootGroup; path = PiWatch; sourceTree = "<group>"; };
 /* End PBXFileSystemSynchronizedRootGroup section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -31,12 +36,24 @@
 			buildActionMask = 2147483647;
 			files = (
 				A1000000000000000000000B /* PiEngineKit in Frameworks */,
+				A20000000000000000000001 /* PiWatchLink */,
 				A10000000000000000000015 /* ios_system in Frameworks */,
 				A10000000000000000000019 /* LlamaServerSupport in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
+		A20000000000000000000008 = {isa = PBXFrameworksBuildPhase; buildActionMask = 2147483647; files = (A20000000000000000000003, ); runOnlyForDeploymentPostprocessing = 0; };
 /* End PBXFrameworksBuildPhase section */
+
+/* Begin PBXCopyFilesBuildPhase section */
+		A20000000000000000000009 /* Embed Watch Content */ = {isa = PBXCopyFilesBuildPhase; buildActionMask = 2147483647; dstPath = "$(CONTENTS_FOLDER_PATH)/Watch"; dstSubfolderSpec = 16; files = (A20000000000000000000005, ); name = "Embed Watch Content"; runOnlyForDeploymentPostprocessing = 0; };
+/* End PBXCopyFilesBuildPhase section */
+/* Begin PBXContainerItemProxy section */
+		A20000000000000000000012 = {isa = PBXContainerItemProxy; containerPortal = A10000000000000000000001; proxyType = 1; remoteGlobalIDString = A2000000000000000000000B; remoteInfo = PiWatch; };
+/* End PBXContainerItemProxy section */
+/* Begin PBXTargetDependency section */
+		A2000000000000000000000A = {isa = PBXTargetDependency; target = A2000000000000000000000B; targetProxy = A20000000000000000000012; };
+/* End PBXTargetDependency section */
 
 /* Begin PBXGroup section */
 		A10000000000000000000002 = {
@@ -44,6 +61,7 @@
 			children = (
 				A10000000000000000000014 /* Info.plist */,
 				A10000000000000000000005 /* PiMobile */,
+				A20000000000000000000007 /* PiWatch */,
 				A10000000000000000000003 /* Products */,
 			);
 			sourceTree = "<group>";
@@ -52,6 +70,7 @@
 			isa = PBXGroup;
 			children = (
 				A10000000000000000000004 /* PiMobile.app */,
+				A20000000000000000000006 /* PiWatch.app */,
 			);
 			name = Products;
 			sourceTree = "<group>";
@@ -68,10 +87,12 @@
 				A10000000000000000000009 /* Resources */,
 				A1000000000000000000000A /* Copy engine bundle */,
 				A10000000000000000000018 /* Embed a-Shell commands */,
+				A20000000000000000000009 /* Embed Watch Content */,
 			);
 			buildRules = (
 			);
 			dependencies = (
+				A2000000000000000000000A,
 			);
 			fileSystemSynchronizedGroups = (
 				A10000000000000000000005 /* PiMobile */,
@@ -81,9 +102,23 @@
 				A1000000000000000000000D /* PiEngineKit */,
 				A10000000000000000000017 /* ios_system */,
 				A1000000000000000000001A /* LlamaServerSupport */,
+				A20000000000000000000002 /* PiWatchLink */,
 			);
 			productName = PiMobile;
 			productReference = A10000000000000000000004 /* PiMobile.app */;
+			productType = "com.apple.product-type.application";
+		};
+		A2000000000000000000000B /* PiWatch */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = A2000000000000000000000C;
+			buildPhases = (A2000000000000000000000D, A20000000000000000000008, A2000000000000000000000E, );
+			buildRules = ();
+			dependencies = ();
+			fileSystemSynchronizedGroups = (A20000000000000000000007, );
+			name = PiWatch;
+			packageProductDependencies = (A20000000000000000000004, );
+			productName = PiWatch;
+			productReference = A20000000000000000000006;
 			productType = "com.apple.product-type.application";
 		};
 /* End PBXNativeTarget section */
@@ -113,6 +148,7 @@
 			packageReferences = (
 				A1000000000000000000000C /* XCLocalSwiftPackageReference "../PiEngineKit" */,
 				A10000000000000000000016 /* XCLocalSwiftPackageReference "../Vendor" */,
+				A2000000000000000000000F /* PiWatchLink */,
 			);
 			preferredProjectObjectVersion = 77;
 			productRefGroup = A10000000000000000000003 /* Products */;
@@ -120,6 +156,7 @@
 			projectRoot = "";
 			targets = (
 				A10000000000000000000006 /* PiMobile */,
+				A2000000000000000000000B /* PiWatch */,
 			);
 		};
 /* End PBXProject section */
@@ -132,6 +169,7 @@
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
+		A2000000000000000000000E = {isa = PBXResourcesBuildPhase; buildActionMask = 2147483647; files = (); runOnlyForDeploymentPostprocessing = 0; };
 /* End PBXResourcesBuildPhase section */
 
 /* Begin PBXShellScriptBuildPhase section */
@@ -183,6 +221,7 @@
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
+		A2000000000000000000000D = {isa = PBXSourcesBuildPhase; buildActionMask = 2147483647; files = (); runOnlyForDeploymentPostprocessing = 0; };
 /* End PBXSourcesBuildPhase section */
 
 /* Begin XCBuildConfiguration section */
@@ -285,6 +324,58 @@
 			};
 			name = Release;
 		};
+		A20000000000000000000010 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_KEY_CFBundleDisplayName = Pi;
+				INFOPLIST_KEY_NSMicrophoneUsageDescription = "Record spoken prompts to send to Pi on your paired iPhone.";
+				INFOPLIST_KEY_WKApplication = YES;
+				INFOPLIST_KEY_WKCompanionAppBundleIdentifier = "$(PI_BUNDLE_ID:default=dev.pimobile.PiMobile)";
+				INFOPLIST_KEY_WKRunsIndependentlyOfCompanionApp = NO;
+				LD_RUNPATH_SEARCH_PATHS = "$(inherited) @executable_path/Frameworks";
+				MARKETING_VERSION = 0.1;
+				PRODUCT_BUNDLE_IDENTIFIER = "$(PI_BUNDLE_ID:default=dev.pimobile.PiMobile).watchkitapp";
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				PROVISIONING_PROFILE_SPECIFIER = "$(PI_WATCH_PROVISIONING_PROFILE)";
+				SDKROOT = watchos;
+				SKIP_INSTALL = YES;
+				SUPPORTED_PLATFORMS = "watchos watchsimulator";
+				SWIFT_VERSION = 6.0;
+				TARGETED_DEVICE_FAMILY = 4;
+				WATCHOS_DEPLOYMENT_TARGET = 26.0;
+			};
+			name = Debug;
+		};
+		A20000000000000000000011 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_KEY_CFBundleDisplayName = Pi;
+				INFOPLIST_KEY_NSMicrophoneUsageDescription = "Record spoken prompts to send to Pi on your paired iPhone.";
+				INFOPLIST_KEY_WKApplication = YES;
+				INFOPLIST_KEY_WKCompanionAppBundleIdentifier = "$(PI_BUNDLE_ID:default=dev.pimobile.PiMobile)";
+				INFOPLIST_KEY_WKRunsIndependentlyOfCompanionApp = NO;
+				LD_RUNPATH_SEARCH_PATHS = "$(inherited) @executable_path/Frameworks";
+				MARKETING_VERSION = 0.1;
+				PRODUCT_BUNDLE_IDENTIFIER = "$(PI_BUNDLE_ID:default=dev.pimobile.PiMobile).watchkitapp";
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				PROVISIONING_PROFILE_SPECIFIER = "$(PI_WATCH_PROVISIONING_PROFILE)";
+				SDKROOT = watchos;
+				SKIP_INSTALL = YES;
+				SUPPORTED_PLATFORMS = "watchos watchsimulator";
+				SWIFT_VERSION = 6.0;
+				TARGETED_DEVICE_FAMILY = 4;
+				WATCHOS_DEPLOYMENT_TARGET = 26.0;
+			};
+			name = Release;
+		};
 /* End XCBuildConfiguration section */
 
 /* Begin XCConfigurationList section */
@@ -306,6 +397,7 @@
 			defaultConfigurationIsVisible = 0;
 			defaultConfigurationName = Release;
 		};
+		A2000000000000000000000C = {isa = XCConfigurationList; buildConfigurations = (A20000000000000000000010, A20000000000000000000011, ); defaultConfigurationIsVisible = 0; defaultConfigurationName = Release; };
 /* End XCConfigurationList section */
 
 /* Begin XCLocalSwiftPackageReference section */
@@ -317,6 +409,7 @@
 			isa = XCLocalSwiftPackageReference;
 			relativePath = ../Vendor;
 		};
+		A2000000000000000000000F = {isa = XCLocalSwiftPackageReference; relativePath = ../PiWatchLink; };
 /* End XCLocalSwiftPackageReference section */
 
 /* Begin XCSwiftPackageProductDependency section */
@@ -335,6 +428,8 @@
 			package = A10000000000000000000016 /* XCLocalSwiftPackageReference "../Vendor" */;
 			productName = LlamaServerSupport;
 		};
+		A20000000000000000000002 = {isa = XCSwiftPackageProductDependency; package = A2000000000000000000000F; productName = PiWatchLink; };
+		A20000000000000000000004 = {isa = XCSwiftPackageProductDependency; package = A2000000000000000000000F; productName = PiWatchLink; };
 /* End XCSwiftPackageProductDependency section */
 	};
 	rootObject = A10000000000000000000001 /* Project object */;

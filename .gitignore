@@ -45,3 +45,5 @@ __pycache__/
 
 # App Store Connect API keys (never commit them)
 *.p8
+
+PiWatchLink/.build/
