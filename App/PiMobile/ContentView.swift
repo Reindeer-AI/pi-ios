@@ -1626,6 +1626,8 @@ private struct SettingsView: View {
     @State private var linkError: String?
     @State private var endpoint = ""
     @State private var serverName = ""
+    @State private var watchAlerts = false
+    @State private var watchVoiceStatus: String?
     @State private var choosingDefault = false
     @State private var search = ""
 
@@ -1703,6 +1705,30 @@ private struct SettingsView: View {
                     Text("An OpenAI-compatible server, such as Ollama on your Mac. Its models are discovered automatically. Sessions show its name, or its address without one.")
                 }
 
+                Section {
+                    Button("Enable voice transcription") {
+                        Task {
+                            watchVoiceStatus = await app.watchCompanion.enableVoice()
+                                ? "Voice transcription is enabled."
+                                : "Allow Speech Recognition for Pi in iPhone Settings → Privacy & Security."
+                        }
+                    }
+                    if let watchVoiceStatus { Text(watchVoiceStatus).font(.caption).foregroundStyle(.secondary) }
+                    Toggle("Task completion alerts", isOn: $watchAlerts)
+                        .onChange(of: watchAlerts) {
+                            if watchAlerts {
+                                Task {
+                                    await app.watchCompanion.enableAlerts()
+                                    watchAlerts = app.watchCompanion.alertsEnabled
+                                }
+                            } else { app.watchCompanion.disableAlerts() }
+                    }
+                } header: {
+                    Text("Apple Watch")
+                } footer: {
+                    Text("Record prompts on your Watch, then review and send the transcript. Your iPhone transcribes them on device when supported; otherwise Apple may process the audio. Alerts follow your iPhone's notification mirroring settings. Open Pi on iPhone if a task needs permission or more time in the background.")
+                }
+
                 Section("About") {
                     HStack(spacing: 14) {
                         Logo(size: 56)
@@ -1720,6 +1746,7 @@ private struct SettingsView: View {
             .navigationTitle("Settings")
             .toolbar { Button("Done") { dismiss() } }
             .onAppear {
+                watchAlerts = app.watchCompanion.alertsEnabled
                 endpoint = app.networkEndpoint
                 serverName = app.networkName
             }
