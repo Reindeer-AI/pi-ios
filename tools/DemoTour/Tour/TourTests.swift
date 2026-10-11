@@ -1492,6 +1492,176 @@ final class TourTests: XCTestCase {
         pause(1)
     }
 
+    /// Before testAppReviewRecording: iCloud's settings taken if pi asks (its accounts with them), and every session
+    /// deleted, so the recording starts from an empty list.
+    func testAppReviewPrep() throws {
+        pi.launch()
+        let choice = pi.buttons["Use iCloud's Settings"].firstMatch
+        if choice.waitForExistence(timeout: 10) {
+            choice.tap()
+            pause(2)
+        }
+        let cleanUp = pi.buttons["Clean Up"]
+        XCTAssertTrue(cleanUp.waitForExistence(timeout: 15), "the sessions list")
+        let loaded = Date().addingTimeInterval(15)
+        while !cleanUp.isEnabled, Date() < loaded { pause(0.5) }
+        guard cleanUp.isEnabled else { return }
+        cleanUp.tap()
+        tap(pi.buttons.matching(NSPredicate(format: "label BEGINSWITH 'All sessions'")).firstMatch)
+        tap(pi.buttons.matching(NSPredicate(format: "label BEGINSWITH 'Delete'")).firstMatch)
+        pause(3)
+        print("sessions list: \(pi.staticTexts.allElementsBoundByIndex.prefix(12).map(\.label))")
+        XCTAssertFalse(pi.buttons["Clean Up"].isEnabled, "sessions remain")
+    }
+
+    /// The screen recording App Review asks for, made on a phone while the Mac records its screen: pi opened from the
+    /// Home Screen, Settings with a signed-in account, a session that charts the planets (shell, Python, a chart), a git
+    /// clone, the browser, and an extension's permissions and source. Run after testAppReviewPrep, with an account
+    /// signed in and its model the default. PI_REVIEW_EXTENSION names the extension shown (default personal-details);
+    /// PI_REVIEW_RECORD_SCREEN=1 starts and stops iOS's screen recording from Control Center (otherwise start it first).
+    /// "REVIEW:" lines mark each step, for cutting the video.
+    func testAppReviewRecording() throws {
+        executionTimeAllowance = 15 * 60
+        let extensionName = ProcessInfo.processInfo.environment["PI_REVIEW_EXTENSION"] ?? "personal-details"
+        let springboard = XCUIApplication(bundleIdentifier: "com.apple.springboard")
+        pi.terminate()
+        XCUIDevice.shared.press(.home)
+        pause(2)
+        // iOS's own screen recording (the red indicator in the status bar), from Control Center, unless it's already on.
+        let recordScreen = ProcessInfo.processInfo.environment["PI_REVIEW_RECORD_SCREEN"] == "1"
+        if recordScreen { toggleScreenRecording(springboard) }
+        pause(4)
+        print("REVIEW: home screen")
+        let icon = springboard.icons["pi"].firstMatch
+        XCTAssertTrue(icon.waitForExistence(timeout: 10), "pi on the Home Screen")
+        // Over to its page, like a person would.
+        for _ in 0..<4 where !icon.isHittable { springboard.swipeLeft(velocity: .slow); pause(1.5) }
+        pause(1)
+        icon.tap()
+        let newSession = pi.buttons["New session"].firstMatch
+        XCTAssertTrue(newSession.waitForExistence(timeout: 30), "pi open")
+        let ready = Date().addingTimeInterval(60)
+        while !newSession.isEnabled && Date() < ready { pause(0.5) }
+        pause(2)
+
+        print("REVIEW: settings")
+        tap(pi.buttons["Settings"])
+        pause(2)
+        let addAccount = pi.buttons["Add account"].firstMatch
+        for _ in 0..<4 where !(addAccount.exists && addAccount.isHittable) { pi.swipeUp(velocity: .slow); pause(1) }
+        print("settings texts: \(pi.staticTexts.allElementsBoundByIndex.prefix(30).map(\.label))")
+        pause(3)
+        tap(pi.buttons["Done"].firstMatch)
+        pause(1.5)
+
+        print("REVIEW: session")
+        tap(newSession)
+        pause(1.5)
+        let message = pi.textFields["Message pi"]
+        let stop = pi.buttons["Stop"].firstMatch
+        func ask(_ prompt: String, minutes: Double) {
+            tap(message)
+            pause(0.6)
+            // A few words at a time, like a person typing, into the focused box (it loses its "Message pi" label once it
+            // has text).
+            let focused = pi.descendants(matching: .any).matching(NSPredicate(format: "hasKeyboardFocus == true")).firstMatch
+            let words = prompt.split(separator: " ")
+            for start in stride(from: 0, to: words.count, by: 6) {
+                focused.typeText(words[start..<min(start + 6, words.count)].joined(separator: " ") + (start + 6 < words.count ? " " : ""))
+                pause(0.1)
+            }
+            pause(1)
+            tap(pi.buttons["Send"].firstMatch)
+            if pi.buttons["Hide keyboard"].waitForExistence(timeout: 2) { pi.buttons["Hide keyboard"].tap() }
+            _ = stop.waitForExistence(timeout: 30)
+            let end = Date().addingTimeInterval(minutes * 60)
+            while stop.exists && Date() < end { pause(1) }
+            pause(3)
+        }
+        ask(Self.screenshotPrompts[2], minutes: 5)
+        // The chart opens as an app: looked at, then minimized to the session.
+        if pi.buttons["Minimize"].exists {
+            pause(3)
+            pi.buttons["Minimize"].firstMatch.tap()
+            pause(2)
+        }
+
+        print("REVIEW: git")
+        ask("Clone octocat/Spoon-Knife from GitHub and list its files.", minutes: 3)
+        pi.navigationBars.buttons.element(boundBy: 0).tap()
+        pause(1.5)
+
+        print("REVIEW: browser")
+        let address = pi.textFields["Search or enter website"].firstMatch
+        tap(address)
+        pause(0.6)
+        address.typeText("en.wikipedia.org/wiki/Planet\n")
+        pause(6)
+        pi.swipeUp(velocity: .slow)
+        pause(2.5)
+        tap(pi.buttons["Done"].firstMatch)
+        pause(1.5)
+
+        print("REVIEW: extensions")
+        tap(pi.buttons["Settings"])
+        pause(1.5)
+        let extensions = pi.buttons["Extensions and skills"].firstMatch
+        for _ in 0..<4 where !(extensions.exists && extensions.isHittable) { pi.swipeUp(velocity: .slow); pause(0.8) }
+        tap(extensions)
+        pause(2)
+        print("extensions texts: \(pi.staticTexts.allElementsBoundByIndex.prefix(40).map(\.label))")
+        let row = pi.staticTexts.matching(NSPredicate(format: "label BEGINSWITH %@", extensionName)).firstMatch
+        XCTAssertTrue(row.waitForExistence(timeout: 15), "\(extensionName) among the extensions")
+        for _ in 0..<5 where !row.isHittable { pi.swipeUp(velocity: .slow); pause(0.6) }
+        pause(1)
+        tap(row)
+        pause(2)
+        // Down past its permissions, to Source.
+        let source = pi.buttons["Source"].firstMatch
+        for _ in 0..<4 where !(source.exists && source.isHittable) { pi.swipeUp(velocity: .slow); pause(1) }
+        pause(2.5)
+        tap(source)
+        pause(2)
+        tap(pi.buttons.matching(NSPredicate(format: "label ENDSWITH %@", ".ts")).firstMatch)
+        pause(3)
+        pi.swipeUp(velocity: .slow)
+        pause(2)
+        print("REVIEW: end")
+        if recordScreen { toggleScreenRecording(springboard) }
+        pause(2)
+    }
+
+    /// Starts or stops iOS's screen recording from Control Center (a swipe down from the top-right corner), which needs
+    /// its Screen Recording control; started, the countdown runs before Control Center closes.
+    private func toggleScreenRecording(_ springboard: XCUIApplication) {
+        let corner = springboard.coordinate(withNormalizedOffset: CGVector(dx: 0.92, dy: 0.003))
+        corner.press(forDuration: 0.1, thenDragTo: springboard.coordinate(withNormalizedOffset: CGVector(dx: 0.92, dy: 0.55)))
+        pause(1.5)
+        let control = springboard.buttons.matching(NSPredicate(format: "label CONTAINS[c] %@", "Screen Recording")).firstMatch
+        guard control.waitForExistence(timeout: 5) else {
+            print("control center buttons: \(springboard.buttons.allElementsBoundByIndex.map(\.label))")
+            XCTFail("Control Center has no Screen Recording control")
+            return
+        }
+        print("screen recording control: \(control.label)")
+        // Control Center opens on the page last used: up a page at a time (down, if need be) until the control shows.
+        for _ in 0..<3 where !control.isHittable {
+            springboard.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.3))
+                .press(forDuration: 0.05, thenDragTo: springboard.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.8)))
+            pause(1)
+        }
+        for _ in 0..<3 where !control.isHittable {
+            springboard.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.75))
+                .press(forDuration: 0.05, thenDragTo: springboard.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.3)))
+            pause(1)
+        }
+        control.tap()
+        pause(4.5)
+        // Closed by tapping outside the controls, near the bottom (the countdown has run).
+        if control.exists { springboard.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.97)).tap() }
+        pause(1)
+    }
+
     /// While the agent writes, the reader can scroll up and stay there (new output doesn't pull the transcript down); the
     /// arrow takes them back to the end, which follows again.
     func testScrollWhileStreaming() throws {
