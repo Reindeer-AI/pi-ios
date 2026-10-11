@@ -4,7 +4,8 @@
   "type": "module",
   "scripts": {
     "build": "node build.mjs",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "test": "esbuild src/sessions.ts --bundle --platform=node --format=esm --packages=external --outfile=dist/session-tests.mjs && node --test test/sessions.mjs"
   },
   "dependencies": {
     "@earendil-works/chord": "1.0.2",
