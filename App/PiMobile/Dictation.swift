@@ -133,9 +133,13 @@ private func recognize(
 }
 
 private func authorized() async -> Bool {
-    let speech = await withCheckedContinuation { continuation in
+    guard await authorizeSpeechRecognition() else { return false }
+    return await AVAudioApplication.requestRecordPermission()
+}
+
+func authorizeSpeechRecognition() async -> Bool {
+    if SFSpeechRecognizer.authorizationStatus() == .authorized { return true }
+    return await withCheckedContinuation { continuation in
         SFSpeechRecognizer.requestAuthorization { continuation.resume(returning: $0 == .authorized) }
     }
-    guard speech else { return false }
-    return await AVAudioApplication.requestRecordPermission()
 }
