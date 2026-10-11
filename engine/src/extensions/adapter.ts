@@ -88,6 +88,7 @@ export type Host = {
 	sessionName(conversationId: number): Promise<string | undefined>;
 	setSessionName(conversationId: number, name: string): Promise<void>;
 	setModel(conversationId: number, provider: string, modelId: string): Promise<void>;
+	setThinkingLevel(conversationId: number, level: string): Promise<void>;
 	/** A prompt an extension submitted, so the app follows it like the user's own. */
 	submitted(conversationId: number, submission: Submission): void;
 	/** Why a conversation's instances start: a fork of another session, or the app starting. */
@@ -570,7 +571,12 @@ class PiExtension implements Adapted {
 				return true;
 			},
 			getThinkingLevel: () => instance.thinkingLevel,
-			setThinkingLevel: missing("setThinkingLevel"),
+			// The session's, as its model takes it (the app shows it in the session's menu).
+			setThinkingLevel: (level: string) => {
+				if (conversationId === undefined) return;
+				instance.thinkingLevel = level;
+				void this.host.setThinkingLevel(conversationId, level).catch(logError(this.name));
+			},
 		};
 	}
 

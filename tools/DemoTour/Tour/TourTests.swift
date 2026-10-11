@@ -1493,6 +1493,64 @@ final class TourTests: XCTestCase {
         pause(1)
     }
 
+    /// The session's thinking level, from its ⋯ menu: High shows in its subtitle and the answer comes without an error;
+    /// with PI_EXPECT_THINKING=1, the answer must also show its thinking (a provider that returns it: a gateway may drop
+    /// it). Off, the next answer comes without. The default for new sessions is in Settings. Needs a reasoning model as
+    /// the default (a provider's, or one through the network server that pi-ai's catalog knows).
+    func testThinkingLevel() throws {
+        executionTimeAllowance = 8 * 60
+        let expectThinking = ProcessInfo.processInfo.environment["PI_EXPECT_THINKING"] == "1"
+        launchReady()
+        tap(pi.buttons["New session"].firstMatch)
+        pause(1.5)
+        let more = pi.navigationBars.buttons["More"].firstMatch
+        func choose(_ level: String) {
+            tap(more)
+            tap(pi.buttons["Thinking"].firstMatch)
+            tap(pi.buttons[level].firstMatch)
+            pause(1.5)
+        }
+        let message = pi.textFields["Message pi"]
+        let stop = pi.buttons["Stop"].firstMatch
+        func ask(_ prompt: String) {
+            tap(message)
+            message.typeText(prompt)
+            tap(pi.buttons["Send"].firstMatch)
+            if pi.buttons["Hide keyboard"].waitForExistence(timeout: 2) { pi.buttons["Hide keyboard"].tap() }
+            _ = stop.waitForExistence(timeout: 30)
+            let end = Date().addingTimeInterval(4 * 60)
+            while stop.exists && Date() < end { pause(1) }
+            pause(2)
+        }
+        choose("High")
+        let subtitle = pi.staticTexts.matching(NSPredicate(format: "label CONTAINS %@", "high thinking")).firstMatch
+        XCTAssertTrue(subtitle.waitForExistence(timeout: 5), "the level in the session's subtitle")
+        print("subtitle: \(subtitle.label)")
+        ask("A bat and a ball cost $1.10 together; the bat costs $1.00 more than the ball. What does the ball cost? Answer in one short sentence.")
+        let thinking = pi.descendants(matching: .any).matching(NSPredicate(format: "label == %@", "Thinking")).firstMatch
+        let shown = thinking.waitForExistence(timeout: 10)
+        print("thinking shown: \(shown)")
+        if expectThinking { XCTAssertTrue(shown, "the answer came with its thinking") }
+        XCTAssertTrue(pi.staticTexts.matching(NSPredicate(format: "label CONTAINS %@", "0.05")).firstMatch.exists, "the answer")
+        XCTAssertFalse(pi.staticTexts.matching(NSPredicate(format: "label CONTAINS[c] %@", "error")).firstMatch.exists, "no error")
+        let thoughtBefore = pi.descendants(matching: .any).matching(NSPredicate(format: "label == %@", "Thinking")).count
+
+        choose("Off")
+        XCTAssertFalse(pi.staticTexts.matching(NSPredicate(format: "label CONTAINS %@", "thinking")).firstMatch.exists, "no level in the subtitle")
+        ask("Reply with exactly the word ok.")
+        let thoughtAfter = pi.descendants(matching: .any).matching(NSPredicate(format: "label == %@", "Thinking")).count
+        print("thinking sections: \(thoughtBefore) before, \(thoughtAfter) after")
+        XCTAssertEqual(thoughtAfter, thoughtBefore, "off: the next answer came without thinking")
+
+        // The default for new sessions, in Settings.
+        backToSessions()
+        tap(pi.buttons["Settings"])
+        let defaultThinking = pi.buttons.matching(NSPredicate(format: "label BEGINSWITH %@", "Thinking")).firstMatch
+        XCTAssertTrue(defaultThinking.waitForExistence(timeout: 10), "the default thinking level in Settings")
+        print("default: \(defaultThinking.label)")
+        pause(1)
+    }
+
     /// An extension's code calling an MCP server (pi.mcp), only once the user allows it: SHARED_FILE is mcptest.piext
     /// (Fixtures/mcptest.ts), with the mock MCP server added as "mock" and signed in (testMCPServer). The first call asks;
     /// refused, the extension gets the refusal and nothing reaches the server; allowed in Settings, the call goes through

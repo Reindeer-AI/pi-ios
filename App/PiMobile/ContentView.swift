@@ -508,6 +508,20 @@ private struct SessionView: View {
             ToolbarItem(placement: .topBarTrailing) {
                 Menu {
                     Button("Change model", systemImage: "cpu") { showingModels = true }
+                    // How much the model thinks, from the levels it takes (none to choose for one that doesn't reason).
+                    if let session, app.thinkingLevels(of: session.model).count > 1 {
+                        Picker(selection: Binding(
+                            get: { session.thinkingLevel },
+                            set: { level in Task { await app.setThinkingLevel(level, for: id) } }
+                        )) {
+                            ForEach(app.thinkingLevels(of: session.model), id: \.self) { level in
+                                Text(AppModel.thinkingTitle(level)).tag(level)
+                            }
+                        } label: {
+                            Label("Thinking", systemImage: "brain")
+                        }
+                        .pickerStyle(.menu)
+                    }
                     Picker(selection: Binding(
                         get: { session?.browser ?? "" },
                         set: { key in Task { await app.setBrowser(key.isEmpty ? nil : key, for: id) } }
@@ -1645,6 +1659,16 @@ private struct SettingsView: View {
                         }
                     }
                     .foregroundStyle(.primary)
+                    // How much new sessions' models think: each takes the nearest level it has.
+                    if let model = app.defaultModel, app.thinkingLevels(of: model).count > 1 {
+                        Picker(selection: $app.defaultThinkingLevel) {
+                            ForEach(app.thinkingLevels(of: model), id: \.self) { level in
+                                Text(AppModel.thinkingTitle(level)).tag(level)
+                            }
+                        } label: {
+                            Label("Thinking", systemImage: "brain")
+                        }
+                    }
                 }
 
                 Section {

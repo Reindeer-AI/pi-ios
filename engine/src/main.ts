@@ -1,6 +1,6 @@
 import type { JsonValue } from "@earendil-works/chord";
 import { BACKGROUND_CONTEXT } from "@earendil-works/chord/context";
-import { type AuthType, type Message, type Model, Type } from "@earendil-works/pi-ai";
+import { type AuthType, clampThinkingLevel, getSupportedThinkingLevels, type Message, type Model, type ModelThinkingLevel, Type } from "@earendil-works/pi-ai";
 import { openAICompletionsApi } from "@earendil-works/pi-ai/api/openai-completions.lazy";
 import { registerBunOAuthFlows } from "@earendil-works/pi-ai/bun-oauth";
 import { createProvider, type MutableModels } from "@earendil-works/pi-ai/models";
@@ -182,6 +182,9 @@ async function openStore(params: OpenParams) {
 			sessionName: async (id) => (await listSessions()).find((session) => session.id === id)?.title,
 			setSessionName: (id, name) => renameSession(id, name),
 			setModel: (id, provider, modelId) => setSessionModel(id, provider, modelId),
+			setThinkingLevel: async (id, level) => {
+				await setSessionThinkingLevel(id, level);
+			},
 			submitted: (id, submission) => track(id, submission),
 			fork: async (id, entryId) => (await forkSession(id, entryId))?.id,
 		},
@@ -351,6 +354,7 @@ onCommand("providers.list", async () => {
 						name: model.name,
 						contextWindow: model.contextWindow,
 						reasoning: model.reasoning,
+						thinkingLevels: model.reasoning ? getSupportedThinkingLevels(model) : ["off"],
 					}))
 				: [],
 		});
@@ -421,7 +425,14 @@ onCommand("github.changed", async () => {
 
 onCommand(
 	"session.create",
-	async ({ provider, modelId, title, browser, requestId }: { provider: string; modelId: string; title?: string; browser?: string; requestId?: string }) => {
+	async ({
+		provider,
+		modelId,
+		title,
+		browser,
+		requestId,
+		thinkingLevel,
+	}: { provider: string; modelId: string; title?: string; browser?: string; requestId?: string; thinkingLevel?: string }) => {
 		const { harness, root, sessionsRoot } = requireEngine();
 		const session = await createSession(root, {
 			title: title ?? NEW_SESSION_TITLE,
@@ -435,6 +446,10 @@ onCommand(
 		if (!agent?.cwd) {
 			await request("fs", "mkdir", { path: directory, recursive: true });
 			await conversation.configure({ cwd: directory, tools: { remove: requireEngine().browser.tools ?? [] } }, context);
+		}
+		// The app's default for new sessions, as this model takes it.
+		if (thinkingLevel && thinkingLevel !== "off" && session.thinkingLevel === undefined) {
+			session.thinkingLevel = await setSessionThinkingLevel(session.id, thinkingLevel);
 		}
 		await watch(session.id);
 		return { ...session, workspace: directory };
@@ -556,6 +571,7 @@ onCommand(
 			createdAt: Date.now(),
 			model: model ?? { provider: "", modelId: "" },
 			browser: null,
+			...(shared.agent?.thinkingLevel ? { thinkingLevel: shared.agent.thinkingLevel } : {}),
 		};
 		await root.commit(async (tx) => {
 			(await tx.doc(SessionsDoc, root.id)).sessions.push(session);
@@ -724,6 +740,7 @@ async function forkSession(id: number, entryId: number): Promise<(SessionMeta & 
 		createdAt: Date.now(),
 		model: { provider: model.provider, modelId: model.modelId },
 		browser: meta?.browser ?? null,
+		...(meta?.thinkingLevel ? { thinkingLevel: meta.thinkingLevel } : {}),
 	};
 	await root.commit(async (tx) => {
 		(await tx.doc(SessionsDoc, root.id)).sessions.push(session);
@@ -741,8 +758,13 @@ onCommand("session.abort", async ({ id }: { id: number }) => {
 
 onCommand("session.setModel", async ({ id, provider, modelId }: { id: number; provider: string; modelId: string }) => {
 	await setSessionModel(id, provider, modelId);
-	return null;
+	return { thinkingLevel: (await listSessions()).find((session) => session.id === id)?.thinkingLevel ?? "off" };
 });
+
+/** How much the session's model thinks: the level as its model takes it (the nearest it has), which it returns. */
+onCommand("session.setThinkingLevel", async ({ id, level }: { id: number; level: string }) => ({
+	thinkingLevel: await setSessionThinkingLevel(id, level),
+}));
 
 /** Attaches the session's browser to a profile (its key), or detaches it (`null`). */
 onCommand("session.setBrowser", async ({ id, browser }: { id: number; browser: string | null }) => {
@@ -884,11 +906,14 @@ async function updateSession(id: number, change: (session: SessionMeta) => void)
 
 async function setSessionModel(id: number, provider: string, modelId: string): Promise<void> {
 	const { models, extensions } = requireEngine();
-	const previous = (await listSessions()).find((session) => session.id === id)?.model;
+	const meta = (await listSessions()).find((session) => session.id === id);
+	const previous = meta?.model;
 	await (await requireConversation(id)).configure({ model: { provider, modelId } }, context);
 	await updateSession(id, (session) => {
 		session.model = { provider, modelId };
 	});
+	// The thinking level carries over, as far as the new model goes.
+	if (meta?.thinkingLevel && meta.thinkingLevel !== "off") await setSessionThinkingLevel(id, meta.thinkingLevel);
 	await extensions.notify(
 		id,
 		{
@@ -899,6 +924,23 @@ async function setSessionModel(id: number, provider: string, modelId: string): P
 		},
 		context,
 	);
+}
+
+/** The level `level` is for this model: itself, or the nearest one it takes (pi-ai's clampThinkingLevel). */
+function thinkingLevelFor(model: { provider: string; modelId: string } | undefined, level: string): string {
+	const known = model ? requireEngine().models.getModel(model.provider, model.modelId) : undefined;
+	return known ? clampThinkingLevel(known, level as ModelThinkingLevel) : level;
+}
+
+/** Sets how much the session's model thinks, as the model takes it; returns the level set. */
+async function setSessionThinkingLevel(id: number, level: string): Promise<string> {
+	const meta = (await listSessions()).find((session) => session.id === id);
+	const effective = thinkingLevelFor(meta?.model, level);
+	await (await requireConversation(id)).configure({ thinkingLevel: effective as ModelThinkingLevel }, context);
+	await updateSession(id, (session) => {
+		session.thinkingLevel = effective;
+	});
+	return effective;
 }
 
 async function renameSession(id: number, title: string): Promise<void> {
@@ -975,30 +1017,38 @@ function track(sessionId: number, submission: Submission): void {
 }
 
 /**
- * What a custom provider's model takes (text, images), as pi-ai's catalogs declare it for the model of that name: a
- * gateway's ids name the route first (anthropic/claude-sonnet-5-5, azure/gpt-6.1-sol); one not in a catalog takes text.
+ * What a custom provider's model takes (text, images) and whether it reasons, as pi-ai's catalogs declare it for the
+ * model of that name: a gateway's ids name the route first (anthropic/claude-sonnet-5-5, azure/gpt-6.1-sol); one not in
+ * a catalog takes text and doesn't reason.
  */
-function catalogInputs(models: MutableModels, customIds: Set<string>): (id: string) => Model<"openai-completions">["input"] {
-	const inputs = new Map<string, Model<"openai-completions">["input"]>();
+function catalogTraits(models: MutableModels, customIds: Set<string>): (id: string) => { input: Model<"openai-completions">["input"]; reasoning: boolean } {
+	const traits = new Map<string, { input: Model<"openai-completions">["input"]; reasoning: boolean }>();
 	for (const provider of models.getProviders()) {
 		if (customIds.has(provider.id)) continue;
 		for (const model of models.getModels(provider.id)) {
-			if (!inputs.has(model.id) || model.input.includes("image")) inputs.set(model.id, [...model.input]);
+			const known = traits.get(model.id);
+			traits.set(model.id, {
+				input: !known || model.input.includes("image") ? [...model.input] : known.input,
+				reasoning: (known?.reasoning ?? false) || model.reasoning,
+			});
 		}
 	}
-	return (id) => inputs.get(id) ?? inputs.get(id.slice(id.indexOf("/") + 1)) ?? ["text"];
+	return (id) => traits.get(id) ?? traits.get(id.slice(id.indexOf("/") + 1)) ?? { input: ["text"], reasoning: false };
 }
 
 function setCustomProvider(models: MutableModels, customIds: Set<string>, config: CustomProvider): void {
-	const inputOf = catalogInputs(models, customIds);
+	const traitsOf = catalogTraits(models, customIds);
 	const catalog: Model<"openai-completions">[] = config.models.map((model) => ({
 		id: model.id,
 		name: model.name ?? model.id,
 		api: "openai-completions",
 		provider: config.id,
 		baseUrl: config.baseUrl,
-		reasoning: false,
-		input: inputOf(model.id),
+		// A reasoning model thinks as asked through the server's reasoning_effort: the efforts every OpenAI-compatible
+		// server takes (low, medium, high), not minimal, xhigh or max.
+		reasoning: traitsOf(model.id).reasoning,
+		...(traitsOf(model.id).reasoning ? { thinkingLevelMap: { minimal: null, xhigh: null, max: null } } : {}),
+		input: traitsOf(model.id).input,
 		cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
 		contextWindow: model.contextWindow ?? 32768,
 		maxTokens: model.maxTokens ?? 4096,

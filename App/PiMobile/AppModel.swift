@@ -33,6 +33,8 @@ final class AppModel {
         let id: Int
         var title: String
         var model: ModelRef
+        /// How much its model thinks: one of pi's levels (`ThinkingLevel`), "off" unless set.
+        var thinkingLevel = "off"
         /// The browser profile key the session's agent browses with, or none.
         var browser: String?
         var createdAt: Date
@@ -202,6 +204,8 @@ final class AppModel {
             let id: String
             let name: String
             let contextWindow: Int
+            /// The thinking levels it takes, "off" first (just "off" for a model that doesn't reason).
+            var thinkingLevels: [String] = ["off"]
         }
 
         let id: String
@@ -264,6 +268,10 @@ final class AppModel {
     private static let pageLimit = 4
     var defaultModel: ModelRef? {
         didSet { UserDefaults.standard.set(try? JSONEncoder().encode(defaultModel), forKey: Self.defaultModelKey) }
+    }
+    /// How much new sessions' models think (as each model takes it); synced, like the default model.
+    var defaultThinkingLevel: String {
+        didSet { UserDefaults.standard.set(defaultThinkingLevel, forKey: Self.defaultThinkingLevelKey) }
     }
 
     /// An OpenAI-compatible server on the network (e.g. Ollama on a Mac); its models are discovered from `/models`.
@@ -336,6 +344,7 @@ final class AppModel {
     private var autorunSessions: Set<Int> = []
 
     private static let defaultModelKey = "defaultModel"
+    private static let defaultThinkingLevelKey = "defaultThinkingLevel"
     private static let preloadedModelKey = "preloadedModel"
     private static let localContextSizeKey = "localContextSize"
     /// The model the in-app server is loading, so a session and the preload never start it twice.
@@ -350,6 +359,7 @@ final class AppModel {
         if let data = UserDefaults.standard.data(forKey: Self.defaultModelKey) {
             defaultModel = try? JSONDecoder().decode(ModelRef.self, from: data)
         }
+        defaultThinkingLevel = UserDefaults.standard.string(forKey: Self.defaultThinkingLevelKey) ?? "off"
         let bundle = Bundle.main.url(forResource: "engine", withExtension: nil)!
         engine = PiEngine(bundleDirectory: bundle)
         for install in [images.install, sqlite.install, files.install, shell.install, keychain.install, loopback.install, browser.install, crabbox.install, github.install, extensionSecrets.install, mcp.install, extensionKeys.install] {
@@ -725,6 +735,9 @@ final class AppModel {
         if keys.contains("defaultModel"), let data = defaults.data(forKey: Self.defaultModelKey) {
             defaultModel = try? JSONDecoder().decode(ModelRef.self, from: data)
         }
+        if keys.contains(Self.defaultThinkingLevelKey) {
+            defaultThinkingLevel = defaults.string(forKey: Self.defaultThinkingLevelKey) ?? "off"
+        }
         Task {
             await updateCustomProviders()
             await syncExtensions()
@@ -986,7 +999,8 @@ final class AppModel {
                 isSubscription: oauth?["isSubscription"] as? Bool ?? false,
                 models: (item["models"] as? [[String: Any]] ?? []).map {
                     Provider.Model(id: $0["id"] as? String ?? "", name: $0["name"] as? String ?? "",
-                                   contextWindow: $0["contextWindow"] as? Int ?? 0)
+                                   contextWindow: $0["contextWindow"] as? Int ?? 0,
+                                   thinkingLevels: $0["thinkingLevels"] as? [String] ?? ["off"])
                 }
             )
         }
@@ -1006,7 +1020,8 @@ final class AppModel {
     /// The session's model and, when it has one, its browser profile.
     func subtitle(of session: Session) -> String {
         if providers.isEmpty, let saved = savedSubtitles[session.id] { return saved }
-        let model = displayName(of: session.model)
+        var model = displayName(of: session.model)
+        if session.thinkingLevel != "off" { model += " · \(Self.thinkingTitle(session.thinkingLevel).lowercased()) thinking" }
         guard let key = session.browser, let profile = browser.profiles.name(of: key) else { return model }
         return "\(model) · \(profile)"
     }
@@ -1077,6 +1092,7 @@ final class AppModel {
                 "lastActiveAt": session.lastActive.timeIntervalSince1970 * 1000,
             ]
             if let browser = session.browser { meta["browser"] = browser }
+            if session.thinkingLevel != "off" { meta["thinkingLevel"] = session.thinkingLevel }
             if let subtitle = providers.isEmpty ? savedSubtitles[session.id] : subtitle(of: session) { meta["subtitle"] = subtitle }
             return meta
         }
@@ -1087,7 +1103,10 @@ final class AppModel {
     @discardableResult
     func createSession(model: ModelRef? = nil, requestID: UUID? = nil) async throws -> Int {
         guard let model = model ?? defaultModel else { throw AppError.noModel }
-        var params: [String: Any] = ["provider": model.provider, "modelId": model.modelId, "browser": browser.profiles.defaultKey]
+        var params: [String: Any] = [
+            "provider": model.provider, "modelId": model.modelId, "browser": browser.profiles.defaultKey,
+            "thinkingLevel": defaultThinkingLevel,
+        ]
         if let requestID { params["requestId"] = requestID.uuidString }
         let result = try await engine.command("session.create", params) as? [String: Any]
         guard let result, var session = Self.session(from: result) else { throw AppError.noModel }
@@ -1290,9 +1309,42 @@ final class AppModel {
     }
 
     func setModel(_ model: ModelRef, for id: Int) async {
-        _ = try? await engine.command("session.setModel", ["id": id, "provider": model.provider, "modelId": model.modelId])
-        if let index = index(of: id) { sessions[index].model = model }
+        let result = try? await engine.command("session.setModel", ["id": id, "provider": model.provider, "modelId": model.modelId]) as? [String: Any]
+        if let index = index(of: id) {
+            sessions[index].model = model
+            // As far as the new model goes.
+            if let level = result?["thinkingLevel"] as? String { sessions[index].thinkingLevel = level }
+        }
         await refreshContext(id)
+    }
+
+    /// How much the session's model thinks; the engine sets the nearest level the model takes.
+    func setThinkingLevel(_ level: String, for id: Int) async {
+        do {
+            let result = try await engine.command("session.setThinkingLevel", ["id": id, "level": level]) as? [String: Any]
+            if let index = index(of: id) { sessions[index].thinkingLevel = result?["thinkingLevel"] as? String ?? level }
+        } catch {
+            log("error", "[\(id)] thinking level: \(error.localizedDescription)")
+        }
+    }
+
+    /// The thinking levels a model takes ("off" alone for one that doesn't reason, or isn't listed).
+    func thinkingLevels(of model: ModelRef) -> [String] {
+        providers.first { $0.id == model.provider }?.models.first { $0.id == model.modelId }?.thinkingLevels ?? ["off"]
+    }
+
+    /// A thinking level as the app names it.
+    static func thinkingTitle(_ level: String) -> String {
+        switch level {
+        case "off": "Off"
+        case "minimal": "Minimal"
+        case "low": "Low"
+        case "medium": "Medium"
+        case "high": "High"
+        case "xhigh": "Extra high"
+        case "max": "Max"
+        default: level.capitalized
+        }
     }
 
     /// Moves the session's agent to another browser profile, or detaches it (`nil`); its open tabs close.
@@ -1541,6 +1593,7 @@ final class AppModel {
             id: id,
             title: meta["title"] as? String ?? "Session",
             model: ModelRef(provider: model["provider"] as? String ?? "", modelId: model["modelId"] as? String ?? ""),
+            thinkingLevel: meta["thinkingLevel"] as? String ?? "off",
             browser: meta["browser"] as? String,
             createdAt: Date(timeIntervalSince1970: (meta["createdAt"] as? Double ?? 0) / 1000),
             lastActive: Date(timeIntervalSince1970: (meta["lastActiveAt"] as? Double ?? meta["createdAt"] as? Double ?? 0) / 1000)

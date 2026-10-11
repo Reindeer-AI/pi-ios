@@ -13,6 +13,8 @@ export type SessionMeta = {
 	model: { provider: string; modelId: string };
 	/** The browser profile key the session's browser uses, or none. Sessions created before browsers have none. */
 	browser?: string | null;
+	/** How much its model thinks (pi's levels, off to max, as the model takes them); sessions from before have none: off. */
+	thinkingLevel?: string;
 };
 
 /** The session list, kept as a document on the root conversation so it is as durable as the transcripts. */
