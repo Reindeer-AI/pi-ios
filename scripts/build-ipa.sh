@@ -3,7 +3,7 @@
 #
 #   PI_TEAM=<team id> scripts/build-ipa.sh                   → dist/PiMobile-<version>.ipa, ad hoc
 #   PI_TEAM=<team id> scripts/build-ipa.sh --development     → signed with the team's development certificate and profile
-#   PI_TEAM=<team id> scripts/build-ipa.sh --profile FILE    → signed with a profile downloaded from developer.apple.com
+#   PI_TEAM=<team id> scripts/build-ipa.sh --profile FILE --watch-profile FILE → signed with a profile downloaded from developer.apple.com
 #                                                               (development, ad hoc, App Store, or enterprise, told apart
 #                                                               by its contents)
 #   PI_TEAM=<team id> scripts/build-ipa.sh --safari-identity → the browser identifies as Safari (some sites, Google's
@@ -26,18 +26,24 @@ BUNDLE_ID="${PI_BUNDLE_ID:-dev.pimobile.PiMobile}"
 CONDITIONS='$(inherited)'
 METHOD=release-testing
 PROFILE=""
+WATCH_PROFILE=""
 while [[ $# -gt 0 ]]; do
 	case "$1" in
 		--development) METHOD=debugging ;;
+		--watch-profile) WATCH_PROFILE="${2:?--watch-profile needs a .mobileprovision file}"; shift ;;
 		--profile) PROFILE="${2:?--profile needs a .mobileprovision file}"; shift ;;
 		--safari-identity) CONDITIONS='$(inherited) SAFARI_IDENTITY' ;;
-		*) echo "usage: $0 [--development | --profile FILE] [--safari-identity]" >&2; exit 2 ;;
+		*) echo "usage: $0 [--development | --profile FILE --watch-profile FILE] [--safari-identity]" >&2; exit 2 ;;
 	esac
 	shift
 done
 
 # A downloaded profile is installed where Xcode looks for profiles and used for manual signing. Without one, Xcode makes
 # or updates profiles through its signed-in Apple account (-allowProvisioningUpdates); CI has no account and needs none.
+if [[ -n "$PROFILE" && -z "$WATCH_PROFILE" || -z "$PROFILE" && -n "$WATCH_PROFILE" ]]; then
+	echo "error: manual signing requires both --profile and --watch-profile (the embedded Watch app has its own bundle ID)" >&2
+	exit 2
+fi
 SIGNING=()
 UPDATES=(-allowProvisioningUpdates)
 if [[ -n "$PROFILE" ]]; then
@@ -61,6 +67,11 @@ if [[ -n "$PROFILE" ]]; then
 	# The app target reads the profile from PI_PROVISIONING_PROFILE: a profile given to every target fails on package
 	# targets (swift-nio's and swift-crypto's resource bundles).
 	SIGNING=(CODE_SIGN_STYLE=Manual CODE_SIGN_IDENTITY="$IDENTITY" PI_PROVISIONING_PROFILE="$PROFILE_NAME")
+	WATCH_DECODED="$(security cms -D -i "$WATCH_PROFILE")"
+	WATCH_PROFILE_NAME="$(plutil -extract Name raw -o - - <<<"$WATCH_DECODED")"
+	WATCH_PROFILE_UUID="$(plutil -extract UUID raw -o - - <<<"$WATCH_DECODED")"
+	cp "$WATCH_PROFILE" "$PROFILES_DIR/$WATCH_PROFILE_UUID.mobileprovision"
+	SIGNING+=(PI_WATCH_PROVISIONING_PROFILE="$WATCH_PROFILE_NAME")
 	UPDATES=()
 	echo "Signing with \"$PROFILE_NAME\" ($METHOD, $IDENTITY)"
 fi
@@ -105,6 +116,8 @@ $(if [[ -n "$PROFILE" ]]; then cat <<SIGNING
 	<dict>
 		<key>$BUNDLE_ID</key>
 		<string>$PROFILE_NAME</string>
+		<key>$BUNDLE_ID.watchkitapp</key>
+		<string>$WATCH_PROFILE_NAME</string>
 	</dict>
 SIGNING
 else cat <<SIGNING

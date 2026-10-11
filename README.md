@@ -86,6 +86,12 @@ open App/PiMobile.xcodeproj
 Run the PiMobile scheme on a simulator. For a device, choose your team in Signing & Capabilities and a bundle identifier
 of your own. A signed `.ipa`: `PI_TEAM=<your team id> scripts/build-ipa.sh` (see the script for profiles).
 
+## Apple Watch
+
+The `PiWatch` companion lets you view recent sessions, dictate a new prompt or reply, receive completion alerts, and
+listen to an answer. It talks to the paired iPhone through WatchConnectivity. Setup, transport limits, and device
+checks are in [docs/watch-companion.md](docs/watch-companion.md).
+
 ## Tests
 
 `tools/DemoTour` holds XCUITest flows over the real app (sessions, extensions and apps, the vault, Shortcuts, sync,
