@@ -1493,6 +1493,96 @@ final class TourTests: XCTestCase {
         pause(1)
     }
 
+    /// An extension's code calling an MCP server (pi.mcp), only once the user allows it: SHARED_FILE is mcptest.piext
+    /// (Fixtures/mcptest.ts), with the mock MCP server added as "mock" and signed in (testMCPServer). The first call asks;
+    /// refused, the extension gets the refusal and nothing reaches the server; allowed in Settings, the call goes through
+    /// without a question, and the server's tools are listed to it. Set back to Ask at the end, so it runs again.
+    func testExtensionMCP() throws {
+        executionTimeAllowance = 6 * 60
+        let path = try XCTUnwrap(ProcessInfo.processInfo.environment["SHARED_FILE"], "the test extension's .piext")
+        pi.launchArguments += ["-openSharedFile", path]
+        launchReady()
+        tap(pi.buttons["Add to Every Session"].firstMatch)
+        pause(2)
+        if pi.buttons["Done"].exists { pi.buttons["Done"].firstMatch.tap() }
+        let message = pi.textFields["Message pi"]
+        func command(_ text: String) {
+            tap(message)
+            message.typeText(text)
+            tap(pi.buttons["Send"].firstMatch)
+        }
+        func notice(_ prefix: String) -> XCUIElement {
+            pi.staticTexts.matching(NSPredicate(format: "label BEGINSWITH %@", prefix)).firstMatch
+        }
+        tap(pi.buttons["New session"].firstMatch)
+        pause(1.5)
+
+        command("/mcptest")
+        let ask = pi.alerts["Allow “mcptest” to use the MCP server “mock”?"]
+        XCTAssertTrue(ask.waitForExistence(timeout: 20), "pi asks before the extension's code uses the server")
+        pause(1)
+        ask.buttons["Don’t Allow"].tap()
+        let refused = notice("mcp error")
+        XCTAssertTrue(refused.waitForExistence(timeout: 15), "the refusal reaches the extension")
+        print("refused: \(refused.label)")
+        XCTAssertTrue(refused.label.contains("didn't allow"), "refused by the user")
+        pause(5)
+
+        command("/mcpservers")
+        let listed = notice("servers:")
+        XCTAssertTrue(listed.waitForExistence(timeout: 15), "the servers, as the extension sees them")
+        print("servers (refused): \(listed.label)")
+        XCTAssertTrue(listed.label.contains("mock=denied:0"), "refused, and its tools not listed")
+        pause(5)
+
+        // Allowed in Settings → Extensions → mcptest → MCP servers.
+        backToSessions()
+        tap(pi.buttons["Settings"])
+        tap(pi.buttons["Extensions and skills"].firstMatch)
+        let row = pi.staticTexts.matching(NSPredicate(format: "label BEGINSWITH %@", "mcptest")).firstMatch
+        XCTAssertTrue(row.waitForExistence(timeout: 15), "mcptest among the extensions")
+        for _ in 0..<5 where !row.isHittable { pi.swipeUp(); pause(0.5) }
+        tap(row)
+        let server = permissionRow("mock")
+        for _ in 0..<4 where !(server.exists && server.isHittable) { pi.swipeUp(); pause(0.5) }
+        XCTAssertTrue(server.waitForExistence(timeout: 10), "the mock server among its MCP servers")
+        print("in Settings: \(server.label)")
+        XCTAssertTrue(server.label.hasSuffix("Don’t Allow"), "refused, in Settings")
+        setPermission(server, to: "Allow")
+        XCTAssertFalse(permissionRow("mock").label.hasSuffix("Don’t Allow"), "allowed in Settings")
+        for _ in 0..<3 where !pi.buttons["Done"].exists {
+            pi.navigationBars.buttons.element(boundBy: 0).tap()
+            pause(1)
+        }
+        tap(pi.buttons["Done"].firstMatch)
+        pause(1)
+
+        tap(pi.buttons["New session"].firstMatch)
+        pause(1.5)
+        command("/mcptest")
+        let echoed = notice("mcp: ")
+        XCTAssertTrue(echoed.waitForExistence(timeout: 30), "the server's answer")
+        print("allowed: \(echoed.label)")
+        XCTAssertFalse(pi.alerts.firstMatch.exists, "no question: allowed in Settings")
+        XCTAssertTrue(echoed.label.contains("hello from code"), "the echo tool's result, from the extension's code")
+        pause(5)
+        command("/mcpservers")
+        let allowedList = notice("servers:")
+        XCTAssertTrue(allowedList.waitForExistence(timeout: 15), "the servers again")
+        print("servers (allowed): \(allowedList.label)")
+        XCTAssertTrue(allowedList.label.contains("mock=allowed:2"), "allowed, with its two tools")
+        pause(1)
+
+        // Back to Ask, for the next run.
+        backToSessions()
+        tap(pi.buttons["Settings"])
+        tap(pi.buttons["Extensions and skills"].firstMatch)
+        for _ in 0..<5 where !row.isHittable { pi.swipeUp(); pause(0.5) }
+        tap(row)
+        for _ in 0..<4 where !(permissionRow("mock").exists && permissionRow("mock").isHittable) { pi.swipeUp(); pause(0.5) }
+        setPermission(permissionRow("mock"), to: "Ask")
+    }
+
     /// Before testAppReviewRecording: iCloud's settings taken if pi asks (its accounts with them), and every session
     /// deleted, so the recording starts from an empty list.
     func testAppReviewPrep() throws {

@@ -3,10 +3,11 @@ import SwiftUI
 import UserNotifications
 import WebKit
 
-/// What each extension may use on this device: the camera, the microphone, the location, and notifications. pi asks the
-/// first time an extension wants one ("Allow “flights” to use the camera?") and remembers the answer, yes or no, which
-/// the user changes in Settings → Extensions → the extension → Permissions. iOS then asks once more, for pi itself, the
-/// first time any extension uses it. Kept on this device only, as iOS keeps its own permissions.
+/// What each extension may use on this device: the camera, the microphone, the location, notifications, and each of the
+/// user's MCP servers (from its code, `pi.mcp`). pi asks the first time an extension wants one ("Allow “flights” to use
+/// the camera?") and remembers the answer, yes or no, which the user changes in Settings → Extensions → the extension →
+/// Permissions. iOS then asks once more, for pi itself, the first time any extension uses the camera, the microphone,
+/// the location, or notifications. Kept on this device only, as iOS keeps its own permissions.
 @MainActor
 final class ExtensionPermissions {
     static let shared = ExtensionPermissions()
@@ -88,9 +89,7 @@ final class ExtensionPermissions {
         let unanswered = capabilities.filter { decision($0, for: extensionName) == nil }
         if unanswered.isEmpty { return capabilities.allSatisfy { decision($0, for: extensionName) == true } }
         guard UIApplication.shared.applicationState == .active else {
-            var pending = UserDefaults.standard.dictionary(forKey: Self.pendingKey) as? [String: [String]] ?? [:]
-            pending[extensionName] = Array(Set((pending[extensionName] ?? []) + unanswered.map(\.rawValue))).sorted()
-            UserDefaults.standard.set(pending, forKey: Self.pendingKey)
+            addPending(unanswered.map(\.rawValue), for: extensionName)
             return false
         }
         let question = "\(extensionName)/" + unanswered.map(\.rawValue).joined(separator: "+")
@@ -120,6 +119,13 @@ final class ExtensionPermissions {
         _ = try? await UNUserNotificationCenter.current().requestAuthorization(options: [.alert, .sound, .badge])
     }
 
+    /// A question for the next time pi is open: a capability's name, or "mcp:" and a server's.
+    private func addPending(_ names: [String], for extensionName: String) {
+        var pending = UserDefaults.standard.dictionary(forKey: Self.pendingKey) as? [String: [String]] ?? [:]
+        pending[extensionName] = Array(Set((pending[extensionName] ?? []) + names)).sorted()
+        UserDefaults.standard.set(pending, forKey: Self.pendingKey)
+    }
+
     /// Asks the questions background runs couldn't (pi has come to the front), one extension at a time.
     func askPending() async {
         let pending = UserDefaults.standard.dictionary(forKey: Self.pendingKey) as? [String: [String]] ?? [:]
@@ -127,9 +133,94 @@ final class ExtensionPermissions {
         UserDefaults.standard.removeObject(forKey: Self.pendingKey)
         for (extensionName, names) in pending.sorted(by: { $0.key < $1.key }) {
             let capabilities = names.compactMap(Capability.init(rawValue:)).filter { decision($0, for: extensionName) == nil }
-            guard !capabilities.isEmpty else { continue }
             // Allowed notifications need iOS's permission for pi too, asked now that pi is in front.
-            if await request(capabilities, for: extensionName), capabilities.contains(.notifications) { await askSystemNotifications() }
+            if !capabilities.isEmpty, await request(capabilities, for: extensionName), capabilities.contains(.notifications) {
+                await askSystemNotifications()
+            }
+            for server in names.filter({ $0.hasPrefix("mcp:") }).map({ String($0.dropFirst(4)) }) {
+                _ = await requestMCP(server, for: extensionName)
+            }
+        }
+    }
+
+    // MARK: MCP servers
+
+    /// Answers about MCP servers: extension → server → `allowed`, and the `url` the server had when answered. A server
+    /// whose URL has changed since (edited, or replaced under its name, here or from another device) counts as not asked.
+    private static let mcpKey = "extensionMCPPermissions"
+
+    private var storedMCP: [String: [String: [String: Any]]] {
+        get { UserDefaults.standard.dictionary(forKey: Self.mcpKey) as? [String: [String: [String: Any]]] ?? [:] }
+        set { UserDefaults.standard.set(newValue, forKey: Self.mcpKey) }
+    }
+
+    /// The server's URL now, nil for a server pi doesn't have.
+    private func mcpURL(_ server: String) -> String? {
+        AppModel.shared?.mcp.entries.first { $0.name == server }?.url
+    }
+
+    /// The user's answer for one extension and MCP server: nil until asked (or since the server's URL changed).
+    func mcpDecision(_ server: String, for extensionName: String) -> Bool? {
+        guard let answer = storedMCP[extensionName]?[server], let url = mcpURL(server), answer["url"] as? String == url else { return nil }
+        return answer["allowed"] as? Bool
+    }
+
+    /// Changes (or, with nil, forgets) an answer, for the server as it is now.
+    func setMCP(_ server: String, for extensionName: String, to allowed: Bool?) {
+        var all = storedMCP
+        var answers = all[extensionName] ?? [:]
+        if let allowed, let url = mcpURL(server) {
+            answers[server] = ["allowed": allowed, "url": url]
+        } else {
+            answers[server] = nil
+        }
+        all[extensionName] = answers.isEmpty ? nil : answers
+        storedMCP = all
+    }
+
+    /// An extension's answers, by server (`pi.mcp.servers()`).
+    func mcpDecisions(for extensionName: String) -> [String: Bool] {
+        var decisions: [String: Bool] = [:]
+        for server in (storedMCP[extensionName] ?? [:]).keys {
+            if let allowed = mcpDecision(server, for: extensionName) { decisions[server] = allowed }
+        }
+        return decisions
+    }
+
+    /// Whether `extensionName` may call the MCP server's tools from its code, asking if it wasn't asked. In the
+    /// background nothing can be asked, so unanswered is refused, and asked the next time pi is open.
+    func requestMCP(_ server: String, for extensionName: String) async -> Bool {
+        guard mcpURL(server) != nil else { return false }
+        if let decision = mcpDecision(server, for: extensionName) { return decision }
+        guard UIApplication.shared.applicationState == .active else {
+            addPending(["mcp:" + server], for: extensionName)
+            return false
+        }
+        let question = "\(extensionName)/mcp:\(server)"
+        if let pending = asking[question] { return await pending.value }
+        let task = Task { @MainActor in
+            guard let allowed = await UserDialog.ask(
+                title: "Allow “\(extensionName)” to use the MCP server “\(server)”?",
+                message: "Its code can call the server's tools with your sign-in, without the agent. You can change this in Settings → Extensions → \(extensionName).",
+                confirmLabel: "Allow",
+                cancelLabel: "Don’t Allow"
+            ) else { return false }
+            setMCP(server, for: extensionName, to: allowed)
+            return allowed
+        }
+        asking[question] = task
+        let allowed = await task.value
+        asking[question] = nil
+        return allowed
+    }
+
+    /// `pi.mcp.call`'s check, before the engine calls the server: throws unless `extensionName` may use it.
+    func mcpAccess(_ server: String, for extensionName: String) async throws {
+        guard mcpURL(server) != nil else { throw AppError.message("There's no MCP server named \(server)") }
+        guard await requestMCP(server, for: extensionName) else {
+            throw AppError.message(mcpDecision(server, for: extensionName) == false
+                ? "The user didn't allow \(extensionName) to use the MCP server \(server)"
+                : "\(extensionName) may use the MCP server \(server) once the user allows it, which pi asks the next time it's open")
         }
     }
 

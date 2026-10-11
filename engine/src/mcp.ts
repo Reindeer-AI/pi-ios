@@ -394,6 +394,47 @@ export function listMcp() {
 	}));
 }
 
+// ---- extensions' code ----
+
+/** How an extension stands with a server: allowed, refused, or not asked yet (pi asks on its first call). */
+export type McpPermission = "allowed" | "denied" | "ask";
+
+/**
+ * `pi.mcp` for an extension's code: the user's MCP servers, and their tools called without the model, with the same
+ * connection and sign-in the agent's tools use. Each server only once the user allows that extension to use it: the
+ * app asks on the first call ("Allow “standup” to use the MCP server “linear-work”?"), remembers the answer, and shows
+ * it in Settings → Extensions → the extension (`ExtensionPermissions.swift`). A server's tools are listed only to an
+ * extension it's allowed.
+ */
+export function mcpApi(extension: string) {
+	return {
+		/** The servers, each with this extension's permission, and its tools if allowed. */
+		servers: async () => {
+			const answers = await request<Record<string, boolean>>("device", "mcpPermissions", { requester: extension });
+			return [...servers.values()].map((server) => {
+				const answer = answers?.[server.config.name];
+				const permission: McpPermission = answer === true ? "allowed" : answer === false ? "denied" : "ask";
+				return {
+					name: server.config.name,
+					enabled: server.config.enabled,
+					state: server.state,
+					permission,
+					tools: permission === "allowed" ? server.tools.map(({ name, title, description, inputSchema }) => ({ name, title, description, inputSchema })) : [],
+				};
+			});
+		},
+		/** Calls `tool` on the server named `name`: the server's own result (content, structuredContent, isError). */
+		call: async (name: string, tool: string, args: Record<string, unknown> = {}, options: { signal?: AbortSignal } = {}): Promise<CallToolResult> => {
+			const server = servers.get(String(name));
+			if (!server) throw new Error(`There's no MCP server named ${name} (Settings → MCP servers)`);
+			if (!server.config.enabled) throw new Error(`The MCP server ${name} is turned off (Settings → MCP servers)`);
+			// Refused (or not answered yet, in the background), the app throws, and nothing reaches the server.
+			await request("device", "mcpAccess", { requester: extension, server: server.config.name });
+			return call(server, String(tool), args ?? {}, options.signal);
+		},
+	};
+}
+
 function changed() {
 	emit({ type: "mcp_status" });
 }

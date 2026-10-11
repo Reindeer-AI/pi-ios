@@ -408,6 +408,12 @@ final class AppModel {
                                                              body: arguments["body"] as? String ?? "",
                                                              session: arguments["session"] as? Int, prompt: arguments["prompt"] as? String)
                 return nil
+            // pi.mcp (mcp.ts): whether the extension may call a server, and its answers so far.
+            case "mcpAccess":
+                try await ExtensionPermissions.shared.mcpAccess(arguments["server"] as? String ?? "", for: requester)
+                return nil
+            case "mcpPermissions":
+                return ExtensionPermissions.shared.mcpDecisions(for: requester)
             default:
                 throw EngineError.unknownMethod("device.\(method)")
             }

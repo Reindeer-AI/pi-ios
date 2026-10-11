@@ -26,6 +26,7 @@ import { keysApi } from "../keys.ts";
 import { redact, vaultApi } from "../vault.ts";
 import { syncedApi } from "../synced.ts";
 import { locationApi, notifyApi } from "../device.ts";
+import { mcpApi } from "../mcp.ts";
 import { extensionOf, secretEnv, secretsApi } from "../secrets.ts";
 import type { JsonValue } from "@earendil-works/chord";
 import { BACKGROUND_CONTEXT } from "@earendil-works/chord/context";
@@ -555,6 +556,8 @@ class PiExtension implements Adapted {
 			// iOS: the device's location, and notifications, once the user allows this extension (device.ts).
 			location: locationApi(extensionOf(this.name)),
 			notify: notifyApi(extensionOf(this.name), conversationId),
+			// iOS: the user's MCP servers, each once the user allows this extension (mcp.ts).
+			mcp: mcpApi(extensionOf(this.name)),
 			events: eventBus(conversationId),
 			getActiveTools: () => [...instance.tools.keys()],
 			getAllTools: () => [...instance.tools.values()].map((tool) => ({ name: tool.name, description: tool.description })),
@@ -606,6 +609,7 @@ class PiExtension implements Adapted {
 			synced: syncedApi(extensionOf(this.name)),
 			location: locationApi(extensionOf(this.name)),
 			notify: notifyApi(extensionOf(this.name), conversationId),
+			mcp: mcpApi(extensionOf(this.name)),
 			sessionManager:
 				conversationId === undefined
 					? { getEntries: () => [], getBranch: () => [], getCwd: () => cwd, getSessionId: () => "", getSessionFile: () => undefined, getLeafId: () => null }

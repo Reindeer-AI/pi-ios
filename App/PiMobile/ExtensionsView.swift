@@ -115,7 +115,8 @@ struct ExtensionsView: View {
                     NavigationLink {
                         ExtensionDetailView(item: item, isDefault: true, remove: { removing = .extensionItem(item, session: nil) },
                                             share: { share(item, session: nil) },
-                                            source: { ExtensionSourceView(app: app, name: item.name, sessionId: nil, fromGitHub: item.revision != nil) })
+                                            source: { ExtensionSourceView(app: app, name: item.name, sessionId: nil, fromGitHub: item.revision != nil) },
+                                            mcpServers: app.mcp.entries)
                     } label: {
                         Toggle(isOn: Binding(get: { item.enabled }, set: { on in setEnabled(item, on) })) {
                             ItemLabel(item: item)
@@ -191,7 +192,8 @@ struct ExtensionsView: View {
                                 item: item, isDefault: false, remove: { removing = .extensionItem(item, session: group.id) },
                                 makeDefault: { perform("Making \(item.name) a default") { try await makeDefault(item, session: group.id) } },
                                 share: { share(item, session: group.id) },
-                                source: { ExtensionSourceView(app: app, name: item.name, sessionId: group.id, fromGitHub: item.revision != nil) }
+                                source: { ExtensionSourceView(app: app, name: item.name, sessionId: group.id, fromGitHub: item.revision != nil) },
+                                mcpServers: app.mcp.entries
                             )
                         } label: {
                             ItemLabel(item: item)
@@ -390,8 +392,12 @@ private struct ExtensionDetailView: View {
     var share: (() -> Void)?
     /// Its files, to read and change (`ExtensionSourceView.swift`).
     var source: (() -> ExtensionSourceView)?
+    /// The user's MCP servers, each of which it may call from its code once allowed (`pi.mcp`).
+    var mcpServers: [MCPServersService.Entry] = []
     /// What it was allowed or refused on this device, nil for not asked yet (`ExtensionPermissions.swift`).
     @State private var permissions: [ExtensionPermissions.Capability: Bool] = [:]
+    /// The same for each MCP server, by name.
+    @State private var mcpPermissions: [String: Bool] = [:]
     @Environment(\.dismiss) private var dismiss
 
     var body: some View {
@@ -432,6 +438,26 @@ private struct ExtensionDetailView: View {
             } footer: {
                 Text("Ask: pi asks the first time it wants it (if that's in the background, the next time pi is open). iOS also asks once for pi itself.")
             }
+            if !mcpServers.isEmpty {
+                Section {
+                    ForEach(mcpServers) { server in
+                        Picker(selection: Binding(get: { mcpPermissions[server.name] }, set: { answer in
+                            ExtensionPermissions.shared.setMCP(server.name, for: item.name, to: answer)
+                            loadPermissions()
+                        })) {
+                            Text("Ask").tag(Bool?.none)
+                            Text("Allow").tag(Bool?.some(true))
+                            Text("Don’t Allow").tag(Bool?.some(false))
+                        } label: {
+                            Label(server.name, systemImage: "server.rack")
+                        }
+                    }
+                } header: {
+                    Text("MCP servers")
+                } footer: {
+                    Text("Whether its code may call a server's tools with your sign-in (pi.mcp), without the agent. Ask: pi asks the first time. A server whose address changes is asked about again.")
+                }
+            }
             Section {
                 if let source {
                     NavigationLink { source() } label: { Label("Source", systemImage: "chevron.left.forwardslash.chevron.right") }
@@ -457,6 +483,7 @@ private struct ExtensionDetailView: View {
 
     private func loadPermissions() {
         permissions = Dictionary(uniqueKeysWithValues: ExtensionPermissions.shared.decisions(for: item.name).map { ($0.0, $0.1) })
+        mcpPermissions = ExtensionPermissions.shared.mcpDecisions(for: item.name)
     }
 }
 
