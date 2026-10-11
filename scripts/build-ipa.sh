@@ -8,6 +8,7 @@
 #                                                               by its contents)
 #   PI_TEAM=<team id> scripts/build-ipa.sh --safari-identity → the browser identifies as Safari (some sites, Google's
 #                                                               sign-in among them, refuse other browsers)
+#   PI_TEAM=<team id> scripts/build-ipa.sh --no-watch        → without the Watch app (then --profile alone signs it)
 #
 # PI_TEAM is the Apple developer team that signs it; PI_VERSION its version (default 0.1.<commit count>; an MDM needs
 # it higher on every upload), PI_BUILD its build number (default PI_VERSION; App Store Connect needs it higher on every
@@ -27,25 +28,31 @@ CONDITIONS='$(inherited)'
 METHOD=release-testing
 PROFILE=""
 WATCH_PROFILE=""
+WATCH=1
 while [[ $# -gt 0 ]]; do
 	case "$1" in
 		--development) METHOD=debugging ;;
 		--watch-profile) WATCH_PROFILE="${2:?--watch-profile needs a .mobileprovision file}"; shift ;;
 		--profile) PROFILE="${2:?--profile needs a .mobileprovision file}"; shift ;;
 		--safari-identity) CONDITIONS='$(inherited) SAFARI_IDENTITY' ;;
-		*) echo "usage: $0 [--development | --profile FILE --watch-profile FILE] [--safari-identity]" >&2; exit 2 ;;
+		--no-watch) WATCH="" ;;
+		*) echo "usage: $0 [--development | --profile FILE (--watch-profile FILE | --no-watch)] [--safari-identity]" >&2; exit 2 ;;
 	esac
 	shift
 done
 
 # A downloaded profile is installed where Xcode looks for profiles and used for manual signing. Without one, Xcode makes
 # or updates profiles through its signed-in Apple account (-allowProvisioningUpdates); CI has no account and needs none.
-if [[ -n "$PROFILE" && -z "$WATCH_PROFILE" || -z "$PROFILE" && -n "$WATCH_PROFILE" ]]; then
-	echo "error: manual signing requires both --profile and --watch-profile (the embedded Watch app has its own bundle ID)" >&2
+if [[ -n "$WATCH" ]] && [[ -n "$PROFILE" && -z "$WATCH_PROFILE" || -z "$PROFILE" && -n "$WATCH_PROFILE" ]]; then
+	echo "error: manual signing requires both --profile and --watch-profile (the embedded Watch app has its own bundle ID), or --no-watch" >&2
 	exit 2
 fi
 SIGNING=()
 UPDATES=(-allowProvisioningUpdates)
+# Without the Watch app: it's still built (the app target depends on it), unsigned, and copied next to the app rather
+# than into it, so neither the app's signature nor the export needs a Watch profile.
+WATCH_SETTINGS=()
+if [[ -z "$WATCH" ]]; then WATCH_SETTINGS=(PI_SIGN_WATCH=NO PI_WATCH_EMBED_PATH=PiWatch-not-embedded); fi
 if [[ -n "$PROFILE" ]]; then
 	DECODED="$(security cms -D -i "$PROFILE")"
 	PROFILE_NAME="$(plutil -extract Name raw -o - - <<<"$DECODED")"
@@ -67,11 +74,13 @@ if [[ -n "$PROFILE" ]]; then
 	# The app target reads the profile from PI_PROVISIONING_PROFILE: a profile given to every target fails on package
 	# targets (swift-nio's and swift-crypto's resource bundles).
 	SIGNING=(CODE_SIGN_STYLE=Manual CODE_SIGN_IDENTITY="$IDENTITY" PI_PROVISIONING_PROFILE="$PROFILE_NAME")
-	WATCH_DECODED="$(security cms -D -i "$WATCH_PROFILE")"
-	WATCH_PROFILE_NAME="$(plutil -extract Name raw -o - - <<<"$WATCH_DECODED")"
-	WATCH_PROFILE_UUID="$(plutil -extract UUID raw -o - - <<<"$WATCH_DECODED")"
-	cp "$WATCH_PROFILE" "$PROFILES_DIR/$WATCH_PROFILE_UUID.mobileprovision"
-	SIGNING+=(PI_WATCH_PROVISIONING_PROFILE="$WATCH_PROFILE_NAME")
+	if [[ -n "$WATCH" ]]; then
+		WATCH_DECODED="$(security cms -D -i "$WATCH_PROFILE")"
+		WATCH_PROFILE_NAME="$(plutil -extract Name raw -o - - <<<"$WATCH_DECODED")"
+		WATCH_PROFILE_UUID="$(plutil -extract UUID raw -o - - <<<"$WATCH_DECODED")"
+		cp "$WATCH_PROFILE" "$PROFILES_DIR/$WATCH_PROFILE_UUID.mobileprovision"
+		SIGNING+=(PI_WATCH_PROVISIONING_PROFILE="$WATCH_PROFILE_NAME")
+	fi
 	UPDATES=()
 	echo "Signing with \"$PROFILE_NAME\" ($METHOD, $IDENTITY)"
 fi
@@ -96,7 +105,11 @@ xcodebuild archive \
 	${UPDATES[@]+"${UPDATES[@]}"} \
 	DEVELOPMENT_TEAM="$TEAM" MARKETING_VERSION="$VERSION" CURRENT_PROJECT_VERSION="$BUILD_NUMBER" \
 	PI_BUNDLE_ID="$BUNDLE_ID" \
-	SWIFT_ACTIVE_COMPILATION_CONDITIONS="$CONDITIONS" ${SIGNING[@]+"${SIGNING[@]}"}
+	SWIFT_ACTIVE_COMPILATION_CONDITIONS="$CONDITIONS" ${SIGNING[@]+"${SIGNING[@]}"} ${WATCH_SETTINGS[@]+"${WATCH_SETTINGS[@]}"}
+if [[ -z "$WATCH" && -d "$BUILD/PiMobile.xcarchive/Products/Applications/PiMobile.app/Watch" ]]; then
+	echo "error: --no-watch, yet the archived app has a Watch app" >&2
+	exit 1
+fi
 
 cat > "$BUILD/ExportOptions.plist" <<EOF
 <?xml version="1.0" encoding="UTF-8"?>
@@ -116,8 +129,11 @@ $(if [[ -n "$PROFILE" ]]; then cat <<SIGNING
 	<dict>
 		<key>$BUNDLE_ID</key>
 		<string>$PROFILE_NAME</string>
+$(if [[ -n "$WATCH" ]]; then cat <<WATCH_ENTRY
 		<key>$BUNDLE_ID.watchkitapp</key>
 		<string>$WATCH_PROFILE_NAME</string>
+WATCH_ENTRY
+fi)
 	</dict>
 SIGNING
 else cat <<SIGNING
