@@ -4,7 +4,8 @@ import XCTest
 /// (by bundle ID), with pauses so a viewer can follow. Run one with
 /// `xcodebuild test -project tools/DemoTour/DemoTour.xcodeproj -scheme DemoTour -destination … -only-testing:DemoTourUITests/TourTests/testSettingsAndSecrets`.
 final class TourTests: XCTestCase {
-    private let pi = XCUIApplication(bundleIdentifier: "dev.pimobile.PiMobile")
+    /// pi by its bundle ID: PI_BUNDLE_ID for another build (an App Store one from TestFlight), else the development one.
+    private let pi = XCUIApplication(bundleIdentifier: ProcessInfo.processInfo.environment["PI_BUNDLE_ID"] ?? "dev.pimobile.PiMobile")
 
     override func setUp() {
         continueAfterFailure = false
@@ -1517,12 +1518,12 @@ final class TourTests: XCTestCase {
     /// The screen recording App Review asks for, made on a phone while the Mac records its screen: pi opened from the
     /// Home Screen, Settings with a signed-in account, a session that charts the planets (shell, Python, a chart), a git
     /// clone, the browser, and an extension's permissions and source. Run after testAppReviewPrep, with an account
-    /// signed in and its model the default. PI_REVIEW_EXTENSION names the extension shown (default personal-details);
+    /// signed in and its model the default. PI_REVIEW_EXTENSION names the extension shown (default flights);
     /// PI_REVIEW_RECORD_SCREEN=1 starts and stops iOS's screen recording from Control Center (otherwise start it first).
     /// "REVIEW:" lines mark each step, for cutting the video.
     func testAppReviewRecording() throws {
         executionTimeAllowance = 15 * 60
-        let extensionName = ProcessInfo.processInfo.environment["PI_REVIEW_EXTENSION"] ?? "personal-details"
+        let extensionName = ProcessInfo.processInfo.environment["PI_REVIEW_EXTENSION"] ?? "flights"
         let springboard = XCUIApplication(bundleIdentifier: "com.apple.springboard")
         pi.terminate()
         XCUIDevice.shared.press(.home)
