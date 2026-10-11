@@ -26,7 +26,7 @@
 	<key>NSFaceIDUsageDescription</key>
 	<string>Extensions can ask for Face ID before using a key they keep on this iPhone, for example to approve a sign-in.</string>
 	<key>NSSpeechRecognitionUsageDescription</key>
-	<string>pi turns what you dictate into text, on this device when it can.</string>
+	<string>pi transcribes spoken prompts and recordings from your Apple Watch, on this device when it can. Apple may process audio when on-device recognition is unavailable.</string>
 	<!-- Plain HTTP to any host, for the app's own requests too: model servers the user names (Ollama on a Mac, a gateway
 	     inside a VPN tunnel, a Tailscale name), Crabbox brokers, and extensions' fetches. On iOS, NSAllowsArbitraryLoads is ignored when NSAllowsLocalNetworking or
 	     NSAllowsArbitraryLoadsInWebContent is also set, so it stands alone (it covers both). -->
