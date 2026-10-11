@@ -47,3 +47,6 @@ __pycache__/
 *.p8
 
 PiWatchLink/.build/
+
+# build-ipa.sh --no-watch builds from this copy of the project (removed afterwards)
+App/PiMobile-no-watch.xcodeproj/

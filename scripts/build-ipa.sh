@@ -49,10 +49,6 @@ if [[ -n "$WATCH" ]] && [[ -n "$PROFILE" && -z "$WATCH_PROFILE" || -z "$PROFILE"
 fi
 SIGNING=()
 UPDATES=(-allowProvisioningUpdates)
-# Without the Watch app: it's still built (the app target depends on it), unsigned, and copied next to the app rather
-# than into it, so neither the app's signature nor the export needs a Watch profile.
-WATCH_SETTINGS=()
-if [[ -z "$WATCH" ]]; then WATCH_SETTINGS=(PI_SIGN_WATCH=NO PI_WATCH_EMBED_PATH=PiWatch-not-embedded); fi
 if [[ -n "$PROFILE" ]]; then
 	DECODED="$(security cms -D -i "$PROFILE")"
 	PROFILE_NAME="$(plutil -extract Name raw -o - - <<<"$DECODED")"
@@ -98,14 +94,43 @@ done
 
 rm -rf "$BUILD"
 mkdir -p "$BUILD" "$DIST"
+
+# Without the Watch app: archived from a copy of the project whose app target neither depends on the Watch app nor
+# embeds it (Xcode can't leave a dependency out by a setting, and checks any app it embeds is signed like the app).
+PROJECT="$ROOT/App/PiMobile.xcodeproj"
+if [[ -z "$WATCH" ]]; then
+	PROJECT="$ROOT/App/PiMobile-no-watch.xcodeproj"
+	rm -rf "$PROJECT"
+	cp -R "$ROOT/App/PiMobile.xcodeproj" "$PROJECT"
+	trap 'rm -rf "$ROOT/App/PiMobile-no-watch.xcodeproj"' EXIT
+	python3 - "$PROJECT/project.pbxproj" <<'UNHOOK'
+import re
+import sys
+
+path = sys.argv[1]
+text = open(path).read()
+# The Watch app's target, the dependency on it, and the phase that embeds it, found by name.
+target = re.search(r"^\t+(\w+) /\* PiWatch \*/ = \{\s*isa = PBXNativeTarget;", text, re.M)
+phase = re.search(r"^\t+(\w+) /\* Embed Watch Content \*/ = \{isa = PBXCopyFilesBuildPhase;", text, re.M)
+dependency = target and re.search(r"^\t+(\w+) = \{isa = PBXTargetDependency; target = " + target.group(1) + ";", text, re.M)
+if not (target and phase and dependency):
+    sys.exit("error: --no-watch can't find the Watch app's target, its dependency, or its embed phase in the project")
+before = len(text)
+text = re.sub(r"^\t+" + phase.group(1) + r" /\* Embed Watch Content \*/,\n", "", text, flags=re.M)
+text = re.sub(r"^\t+" + dependency.group(1) + r",\n", "", text, flags=re.M)
+if len(text) == before:
+    sys.exit("error: --no-watch removed nothing from the app target")
+open(path, "w").write(text)
+UNHOOK
+fi
 xcodebuild archive \
-	-project "$ROOT/App/PiMobile.xcodeproj" -scheme PiMobile -configuration Release \
+	-project "$PROJECT" -scheme PiMobile -configuration Release \
 	-destination 'generic/platform=iOS' \
 	-archivePath "$BUILD/PiMobile.xcarchive" -derivedDataPath "$BUILD/DerivedData" \
 	${UPDATES[@]+"${UPDATES[@]}"} \
 	DEVELOPMENT_TEAM="$TEAM" MARKETING_VERSION="$VERSION" CURRENT_PROJECT_VERSION="$BUILD_NUMBER" \
 	PI_BUNDLE_ID="$BUNDLE_ID" \
-	SWIFT_ACTIVE_COMPILATION_CONDITIONS="$CONDITIONS" ${SIGNING[@]+"${SIGNING[@]}"} ${WATCH_SETTINGS[@]+"${WATCH_SETTINGS[@]}"}
+	SWIFT_ACTIVE_COMPILATION_CONDITIONS="$CONDITIONS" ${SIGNING[@]+"${SIGNING[@]}"}
 if [[ -z "$WATCH" && -d "$BUILD/PiMobile.xcarchive/Products/Applications/PiMobile.app/Watch" ]]; then
 	echo "error: --no-watch, yet the archived app has a Watch app" >&2
 	exit 1

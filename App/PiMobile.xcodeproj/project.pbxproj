@@ -46,7 +46,7 @@
 /* End PBXFrameworksBuildPhase section */
 
 /* Begin PBXCopyFilesBuildPhase section */
-		A20000000000000000000009 /* Embed Watch Content */ = {isa = PBXCopyFilesBuildPhase; buildActionMask = 2147483647; dstPath = "$(PI_WATCH_EMBED_PATH)"; dstSubfolderSpec = 16; files = (A20000000000000000000005, ); name = "Embed Watch Content"; runOnlyForDeploymentPostprocessing = 0; };
+		A20000000000000000000009 /* Embed Watch Content */ = {isa = PBXCopyFilesBuildPhase; buildActionMask = 2147483647; dstPath = "$(CONTENTS_FOLDER_PATH)/Watch"; dstSubfolderSpec = 16; files = (A20000000000000000000005, ); name = "Embed Watch Content"; runOnlyForDeploymentPostprocessing = 0; };
 /* End PBXCopyFilesBuildPhase section */
 /* Begin PBXContainerItemProxy section */
 		A20000000000000000000012 = {isa = PBXContainerItemProxy; containerPortal = A10000000000000000000001; proxyType = 1; remoteGlobalIDString = A2000000000000000000000B; remoteInfo = PiWatch; };
@@ -284,7 +284,6 @@
 				MARKETING_VERSION = 0.1;
 				PRODUCT_BUNDLE_IDENTIFIER = "$(PI_BUNDLE_ID:default=dev.pimobile.PiMobile)";
 				// scripts/build-ipa.sh --profile names the profile for this target only (package targets refuse one).
-				PI_WATCH_EMBED_PATH = "$(CONTENTS_FOLDER_PATH)/Watch";
 				PROVISIONING_PROFILE_SPECIFIER = "$(PI_PROVISIONING_PROFILE)";
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SWIFT_VERSION = 6.0;
@@ -318,7 +317,6 @@
 				MARKETING_VERSION = 0.1;
 				PRODUCT_BUNDLE_IDENTIFIER = "$(PI_BUNDLE_ID:default=dev.pimobile.PiMobile)";
 				// scripts/build-ipa.sh --profile names the profile for this target only (package targets refuse one).
-				PI_WATCH_EMBED_PATH = "$(CONTENTS_FOLDER_PATH)/Watch";
 				PROVISIONING_PROFILE_SPECIFIER = "$(PI_PROVISIONING_PROFILE)";
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SWIFT_VERSION = 6.0;
@@ -330,7 +328,6 @@
 			isa = XCBuildConfiguration;
 			buildSettings = {
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
-				CODE_SIGNING_ALLOWED = "$(PI_SIGN_WATCH)";
 				CODE_SIGN_STYLE = Automatic;
 				CURRENT_PROJECT_VERSION = 1;
 				GENERATE_INFOPLIST_FILE = YES;
@@ -343,7 +340,6 @@
 				MARKETING_VERSION = 0.1;
 				PRODUCT_BUNDLE_IDENTIFIER = "$(PI_BUNDLE_ID:default=dev.pimobile.PiMobile).watchkitapp";
 				PRODUCT_NAME = "$(TARGET_NAME)";
-				PI_SIGN_WATCH = YES;
 				PROVISIONING_PROFILE_SPECIFIER = "$(PI_WATCH_PROVISIONING_PROFILE)";
 				SDKROOT = watchos;
 				SKIP_INSTALL = YES;
@@ -358,7 +354,6 @@
 			isa = XCBuildConfiguration;
 			buildSettings = {
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
-				CODE_SIGNING_ALLOWED = "$(PI_SIGN_WATCH)";
 				CODE_SIGN_STYLE = Automatic;
 				CURRENT_PROJECT_VERSION = 1;
 				GENERATE_INFOPLIST_FILE = YES;
@@ -371,7 +366,6 @@
 				MARKETING_VERSION = 0.1;
 				PRODUCT_BUNDLE_IDENTIFIER = "$(PI_BUNDLE_ID:default=dev.pimobile.PiMobile).watchkitapp";
 				PRODUCT_NAME = "$(TARGET_NAME)";
-				PI_SIGN_WATCH = YES;
 				PROVISIONING_PROFILE_SPECIFIER = "$(PI_WATCH_PROVISIONING_PROFILE)";
 				SDKROOT = watchos;
 				SKIP_INSTALL = YES;
