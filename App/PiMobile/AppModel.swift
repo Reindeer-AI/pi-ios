@@ -3,6 +3,7 @@ import Observation
 import UIKit
 import OSLog
 import PiEngineKit
+import PiWatchLink
 
 /// The app's state: the pi engine with its native services, every session (each its own durable pi agent with its
 /// own workspace), model providers and accounts, and on-device models.
@@ -235,6 +236,8 @@ final class AppModel {
         var error: String?
     }
 
+    @ObservationIgnored lazy var watchCompanion = WatchCompanion(app: self, storage: storage)
+
     private(set) var phase: Phase = .starting
     /// The app's model, for Shortcuts' actions (`Shortcuts.swift`).
     static weak var shared: AppModel?
@@ -433,6 +436,7 @@ final class AppModel {
         browser.profileForSession = { [weak self] id in self?.sessions.first { $0.id == id }?.browser }
         models.onLog = { message in log("model", message) }
         models.onModelsChanged = { [weak self] in Task { await self?.updateCustomProviders() } }
+        watchCompanion.activate()
     }
 
     // MARK: - Startup
@@ -1058,6 +1062,7 @@ final class AppModel {
     private var savedSubtitles: [Int: String] = [:]
 
     private func saveSessionList() {
+        watchCompanion.changed()
         let list: [[String: Any]] = sessions.map { session in
             var meta: [String: Any] = [
                 "id": session.id, "title": session.title,
@@ -1074,11 +1079,11 @@ final class AppModel {
     }
 
     @discardableResult
-    func createSession(model: ModelRef? = nil) async throws -> Int {
+    func createSession(model: ModelRef? = nil, requestID: UUID? = nil) async throws -> Int {
         guard let model = model ?? defaultModel else { throw AppError.noModel }
-        let result = try await engine.command("session.create", [
-            "provider": model.provider, "modelId": model.modelId, "browser": browser.profiles.defaultKey,
-        ]) as? [String: Any]
+        var params: [String: Any] = ["provider": model.provider, "modelId": model.modelId, "browser": browser.profiles.defaultKey]
+        if let requestID { params["requestId"] = requestID.uuidString }
+        let result = try await engine.command("session.create", params) as? [String: Any]
         guard let result, var session = Self.session(from: result) else { throw AppError.noModel }
         session.loaded = true
         if let index = index(of: session.id) { sessions[index] = session } else { sessions.insert(session, at: 0) }
@@ -1163,14 +1168,16 @@ final class AppModel {
 
     /// Sends a prompt; the submission of the run it starts, or nil when none does.
     @discardableResult
-    private func submit(_ text: String, to id: Int, delivery: Delivery) async throws -> Int? {
+    private func submit(_ text: String, to id: Int, delivery: Delivery, requestID: UUID? = nil) async throws -> Int? {
         guard let index = index(of: id), !text.isEmpty else { return nil }
         sessions[index].error = nil
         log("prompt", "[\(id)] \(text)")
         if sessions[index].model.provider == "ondevice" { try await loadLocalModel(sessions[index].model.modelId) }
         sessions[index].running = true
         updateBackground()
-        let result = try await engine.command("session.prompt", ["id": id, "text": text, "whenBusy": delivery.rawValue]) as? [String: Any]
+        var params: [String: Any] = ["id": id, "text": text, "whenBusy": delivery.rawValue]
+        if let requestID { params["requestId"] = requestID.uuidString }
+        let result = try await engine.command("session.prompt", params) as? [String: Any]
         // A `!command`, an extension's `/command`, or a prompt an extension took (pi's `input` event): no run starts.
         if result?["submissionId"] is NSNull, let index = self.index(of: id) {
             sessions[index].running = false
@@ -1180,6 +1187,15 @@ final class AppModel {
             return nil
         }
         return result?["submissionId"] as? Int
+    }
+
+    func submitFromWatch(_ text: String, sessionID: Int, requestID: UUID) async throws -> Int? {
+        guard let session = sessions.first(where: { $0.id == sessionID }) else { throw WatchCompanion.Failure.sessionMissing }
+        if session.model.provider == "ondevice", UIApplication.shared.applicationState != .active {
+            throw WatchCompanion.Failure.onDeviceBackground
+        }
+        if UIApplication.shared.applicationState != .active { beginBackgroundTask() }
+        return try await submit(text, to: sessionID, delivery: .followUp, requestID: requestID)
     }
 
     /// A tapped notification from an extension (`pi.notify`): its session opens, and gets its prompt if it has one; a
@@ -1579,6 +1595,7 @@ final class AppModel {
     // MARK: - Engine events
 
     private func handle(_ event: [String: Any]) {
+        defer { watchCompanion.changed() }
         switch event["type"] as? String {
         case "agent_events":
             guard let index = index(of: event["sessionId"] as? Int) else { return }
@@ -1878,6 +1895,7 @@ final class AppModel {
     }
 
     func lifecycle(_ state: String) {
+        watchCompanion.changed()
         log("lifecycle", state)
         if state == "background" {
             wentToBackground = true
