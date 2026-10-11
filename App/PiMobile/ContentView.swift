@@ -348,6 +348,10 @@ private struct SessionView: View {
     @State private var photoItems: [PhotosPickerItem] = []
     /// Whether the message wraps past one line: the buttons beside it then go two by two, leaving it the width.
     @State private var messageWraps = false
+    /// The message's length when it wrapped. Two by two, the buttons widen the box, so the text may fit on one line
+    /// again; they stay so until the message is shorter than this (a keystroke, never the layout itself, sets them back),
+    /// or the layout would flip back and forth without end.
+    @State private var wrappedAt = 0
     /// The accessories' own height (browser card, widgets, status lines), for the strip that holds them.
     @State private var accessoriesHeight: CGFloat = 0
     @Environment(\.horizontalSizeClass) private var sizeClass
@@ -784,7 +788,16 @@ private struct SessionView: View {
                 .padding(.horizontal, 14)
                 .padding(.vertical, 9)
                 .background(Color(.secondarySystemBackground), in: .rect(cornerRadius: 20))
-                .onGeometryChange(for: Bool.self) { $0.size.height > 48 } action: { messageWraps = $0 }
+                .onGeometryChange(for: Bool.self) { $0.size.height > 48 } action: { tall in
+                    if tall, !messageWraps {
+                        wrappedAt = prompt.count
+                        messageWraps = true
+                    }
+                }
+                .onChange(of: prompt) { _, text in
+                    // Shorter than when it wrapped: back to one row (where, if it still wraps, it goes two by two again).
+                    if messageWraps, text.count < wrappedAt { messageWraps = false }
+                }
             if session?.running == true {
                 Button("Stop", systemImage: "stop.circle.fill") { app.abort(id) }
                     .labelStyle(.iconOnly).font(.title).tint(.red)

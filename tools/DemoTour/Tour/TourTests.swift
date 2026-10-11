@@ -1493,6 +1493,48 @@ final class TourTests: XCTestCase {
         pause(1)
     }
 
+    /// Typing during a run, letter by letter, past the point where the message wraps and the buttons beside it go two by
+    /// two (Stop and Steer take room then): the layout settles (each keystroke waits for the app to idle, which a layout
+    /// flipping back and forth never does) and the box holds what was typed. Then shorter again, and empty.
+    func testComposerWrapWhileRunning() throws {
+        executionTimeAllowance = 5 * 60
+        launchReady()
+        tap(pi.buttons["New session"].firstMatch)
+        pause(1.5)
+        let message = pi.textFields["Message pi"]
+        let stop = pi.buttons["Stop"].firstMatch
+        // A reply first, so the context gauge joins the buttons (four of them, two columns when they go two by two).
+        tap(message)
+        message.typeText("Reply with exactly the word ok.")
+        tap(pi.buttons["Send"].firstMatch)
+        _ = stop.waitForExistence(timeout: 20)
+        let replied = Date().addingTimeInterval(2 * 60)
+        while stop.exists && Date() < replied { pause(1) }
+        pause(2)
+        tap(message)
+        message.typeText("!sleep 60")
+        tap(pi.buttons["Send"].firstMatch)
+        XCTAssertTrue(stop.waitForExistence(timeout: 15), "the command running")
+        let field = pi.textFields.firstMatch
+        tap(field)
+        let text = "Also check whether the README mentions the license, and which one it is, please"
+        for character in text {
+            field.typeText(String(character))
+        }
+        pause(1)
+        let typed = field.value as? String ?? ""
+        print("typed: \(typed)")
+        XCTAssertEqual(typed, text, "the box holds what was typed")
+        // Shorter, past where it wrapped, and empty: no flipping either way.
+        field.typeText(String(repeating: XCUIKeyboardKey.delete.rawValue, count: 40))
+        pause(1)
+        field.typeText(String(repeating: XCUIKeyboardKey.delete.rawValue, count: text.count))
+        pause(1)
+        XCTAssertTrue(stop.exists, "still running")
+        tap(stop)
+        pause(1)
+    }
+
     /// The session's thinking level, from its ⋯ menu: High shows in its subtitle and the answer comes without an error;
     /// with PI_EXPECT_THINKING=1, the answer must also show its thinking (a provider that returns it: a gateway may drop
     /// it). Off, the next answer comes without. The default for new sessions is in Settings. Needs a reasoning model as
