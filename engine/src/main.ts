@@ -45,7 +45,7 @@ import { contextUsage } from "./context.ts";
 import { VaultTools } from "./vault.ts";
 import { BASH_ENTRY, SYSTEM_PROMPT_ENTRY } from "./extensions/session.ts";
 import { installNativeFetch } from "./net.ts";
-import { type SessionMeta, SessionsDoc, transcriptOf } from "./sessions.ts";
+import { type SessionMeta, SessionsDoc, createSession, submissionReply, transcriptOf } from "./sessions.ts";
 import { NativeSqliteDatabase } from "./storage.ts";
 
 const context = BACKGROUND_CONTEXT;
@@ -284,7 +284,10 @@ async function finishOpen(sessions: SessionMeta[], sessionsRoot: string, browser
 	for (const session of sessions) {
 		const conversation = await harness.conversation(session.id as ConversationId, context);
 		const directory = sessionDirectory(sessionsRoot, session.id);
-		if (conversation && (await conversation.agent(context)).cwd !== directory) await conversation.configure({ cwd: directory }, context);
+		if (conversation && (await conversation.agent(context)).cwd !== directory) {
+			await request("fs", "mkdir", { path: directory, recursive: true });
+			await conversation.configure({ cwd: directory }, context);
+		}
 		// Sessions from before the browser's tools were hidden by default get them hidden too.
 		if (conversation && (await harness.snapshot(AgentDoc, conversation.id, context))?.tools === undefined) {
 			await conversation.configure({ tools: { remove: browser.tools ?? [] } }, context);
@@ -418,24 +421,22 @@ onCommand("github.changed", async () => {
 
 onCommand(
 	"session.create",
-	async ({ provider, modelId, title, browser }: { provider: string; modelId: string; title?: string; browser?: string }) => {
+	async ({ provider, modelId, title, browser, requestId }: { provider: string; modelId: string; title?: string; browser?: string; requestId?: string }) => {
 		const { harness, root, sessionsRoot } = requireEngine();
-		const model = { provider, modelId };
-		const conversation = await harness.createConversation({ ownership: { kind: "ownerless" }, agent: { model } }, context);
-		const directory = sessionDirectory(sessionsRoot, conversation.id);
-		await request("fs", "mkdir", { path: directory, recursive: true });
-		await conversation.configure({ cwd: directory, tools: { remove: requireEngine().browser.tools ?? [] } }, context);
-		const session: SessionMeta = {
-			id: conversation.id,
+		const session = await createSession(root, {
 			title: title ?? NEW_SESSION_TITLE,
-			createdAt: Date.now(),
-			model,
+			model: { provider, modelId },
 			browser: browser ?? null,
-		};
-		await root.commit(async (tx) => {
-			(await tx.doc(SessionsDoc, root.id)).sessions.push(session);
+			...(requestId ? { creationRequestId: requestId } : {}),
 		}, context);
-		await watch(conversation.id);
+		const conversation = await requireConversation(session.id);
+		const directory = sessionDirectory(sessionsRoot, session.id);
+		const agent = await harness.snapshot(AgentDoc, conversation.id, context);
+		if (!agent?.cwd) {
+			await request("fs", "mkdir", { path: directory, recursive: true });
+			await conversation.configure({ cwd: directory, tools: { remove: requireEngine().browser.tools ?? [] } }, context);
+		}
+		await watch(session.id);
 		return { ...session, workspace: directory };
 	},
 );
@@ -603,10 +604,18 @@ onCommand("session.reply", async ({ id, submissionId }: { id: number; submission
 	return { status: record?.status ?? "done", reason: record?.reason ?? null, detail: record?.detail ?? null, text, error: error ?? null };
 });
 
+onCommand("session.submission", ({ id, submissionId }: { id: number; submissionId: number }) =>
+	submissionReply(requireEngine().harness, id, submissionId, context),
+);
+
 /** A prompt from the user. While the agent works, `whenBusy` says where it goes: "steer" reaches the agent after its
  * current tool call, "followUp" waits until the run is done. */
-onCommand("session.prompt", async ({ id, text: typed, whenBusy }: { id: number; text: string; whenBusy?: "steer" | "followUp" }) => {
+onCommand("session.prompt", async ({ id, text: typed, whenBusy, requestId }: { id: number; text: string; whenBusy?: "steer" | "followUp"; requestId?: string }) => {
 	const conversation = await requireConversation(id);
+	if (requestId) {
+		const existing = await conversation.commit((tx) => tx.submissionByRequest(conversation.id, requestId), context);
+		if (existing) return { submissionId: existing.id };
+	}
 	// For "Clean Up": sessions are old by when they were last used.
 	await updateSession(id, (session) => {
 		session.lastActiveAt = Date.now();
@@ -634,7 +643,7 @@ onCommand("session.prompt", async ({ id, text: typed, whenBusy }: { id: number; 
 	if (replacedSystemPrompt !== undefined) {
 		await conversation.submit({ type: "write", entry: { kind: SYSTEM_PROMPT_ENTRY, data: { systemPrompt: replacedSystemPrompt } } }, context);
 	}
-	const submission = await conversation.submit({ type: "input", content: text, whenBusy: whenBusy ?? "steer" }, context);
+	const submission = await conversation.submit({ type: "input", content: text, whenBusy: whenBusy ?? "steer", ...(requestId ? { requestId } : {}) }, context);
 	track(id, submission);
 	await updateSession(id, (session) => {
 		if (session.title === NEW_SESSION_TITLE) session.title = text.replace(/\s+/g, " ").trim().slice(0, 48);
