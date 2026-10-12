@@ -115,6 +115,12 @@ type OpenParams = {
 	debugTools?: boolean;
 	/** Automatic compaction's thresholds, over pi's (tests). */
 	compaction?: Partial<CompactionPolicy>;
+	/**
+	 * After the app replaced a page that stopped answering: extensions that were working then, turned off rather than
+	 * loaded (a default stays off), and sessions whose runs are aborted rather than resumed, so whatever froze the
+	 * engine doesn't run again.
+	 */
+	recover?: { extensions?: string[]; abort?: number[] };
 };
 
 /**
@@ -277,10 +283,16 @@ async function openStore(params: OpenParams) {
 	configureApps({ harness: () => requireEngine().harness, rootId: () => requireEngine().root.id });
 
 	const sessions = await listSessions();
-	return { sessions, rest: () => finishOpen(sessions, sessionsRoot, browser, extensions) };
+	return { sessions, rest: () => finishOpen(sessions, sessionsRoot, browser, extensions, params.recover) };
 }
 
-async function finishOpen(sessions: SessionMeta[], sessionsRoot: string, browser: ReturnType<typeof browserTools>, extensions: Extensions) {
+async function finishOpen(
+	sessions: SessionMeta[],
+	sessionsRoot: string,
+	browser: ReturnType<typeof browserTools>,
+	extensions: Extensions,
+	recover: OpenParams["recover"],
+) {
 	const { harness, root } = requireEngine();
 	// iOS moves the app's container (on updates and reinstalls), so a session's stored working directory can point
 	// at the old one: point it at the session's directory again.
@@ -302,6 +314,14 @@ async function finishOpen(sessions: SessionMeta[], sessionsRoot: string, browser
 	await refreshSecrets().catch((error) => console.warn(`secrets: ${error}`));
 	// The servers' last tool lists at once; connections in the background.
 	await refreshMcp().catch((error) => console.warn(`mcp: ${error}`));
+	// After a frozen page: the extensions that were working then stay off, and the runs that were going stop.
+	const held = recover?.extensions ?? [];
+	for (const name of held) await extensions.setDefaultEnabled(root, name, false, context).catch(() => {});
+	extensions.hold(held);
+	for (const id of recover?.abort ?? []) {
+		const conversation = await harness.conversation(id as ConversationId, context).catch(() => undefined);
+		await conversation?.abort(context).catch((error: unknown) => console.warn(`recover: abort ${id}: ${error}`));
+	}
 	// Extensions first: resumed runs may call their tools.
 	await extensions.restore(harness, root, sessions.map((session) => session.id), context);
 	// Defaults installed from GitHub whose folder changed: in the background.
@@ -374,6 +394,9 @@ onCommand("auth.logout", async ({ providerId }: { providerId: string }) => {
 });
 
 onCommand("session.list", () => listSessions());
+
+/** For the app's watchdog: answers at once unless something holds the engine's thread. */
+onCommand("ping", () => "pong");
 
 /** The app signed in to a Crabbox broker, or out: the tools follow. */
 onCommand("crabbox.changed", async () => ({ available: await refreshCrabbox() }));

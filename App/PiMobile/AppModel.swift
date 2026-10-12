@@ -497,10 +497,90 @@ final class AppModel {
             environment = "secure context: \(ready.secureContext) · WebAssembly: \(ready.webAssembly)"
             log("ready", environment)
             await open()
+            startWatchdog()
             try await runLaunchArguments()
         } catch {
             fail(error.localizedDescription)
         }
+    }
+
+    // MARK: - Watchdog
+
+    /// While pi is in front, the engine answers a ping at once unless code that never yields (an extension's) holds its
+    /// only thread, which nothing inside the engine can stop. Unanswered for 10 seconds, its page is replaced.
+    private var watchdog: Task<Void, Never>?
+    private var recovering = false
+    /// What the next `open` tells the engine after a frozen page: the extensions to keep off, the runs to abort.
+    private var recovery: (extensions: [String], abort: [Int])?
+
+    private func startWatchdog() {
+        guard watchdog == nil else { return }
+        watchdog = Task { [weak self] in
+            while !Task.isCancelled {
+                try? await Task.sleep(for: .seconds(5))
+                guard let self, self.phase == .ready, !self.recovering, UIApplication.shared.applicationState == .active else { continue }
+                if await !self.engineAnswers(within: .seconds(10)) { await self.recoverFrozenEngine() }
+            }
+        }
+    }
+
+    /// Whether the engine answers a ping in time (an answer that's an error counts: only silence is a frozen page).
+    private func engineAnswers(within limit: Duration) async -> Bool {
+        await finishes(within: limit) { [engine] in _ = try? await engine.command("ping") }
+    }
+
+    /// Whether `work` finishes within `limit`, told as soon as either happens. (A task group would wait for `work` even
+    /// after the time ran out: waiting on a frozen engine can't be cancelled.)
+    func finishes(within limit: Duration, _ work: @escaping @MainActor () async -> Void) async -> Bool {
+        final class Race { var settled = false }
+        let race = Race()
+        return await withCheckedContinuation { continuation in
+            Task { @MainActor in
+                await work()
+                if !race.settled { race.settled = true; continuation.resume(returning: true) }
+            }
+            Task { @MainActor in
+                try? await Task.sleep(for: limit)
+                if !race.settled { race.settled = true; continuation.resume(returning: false) }
+            }
+        }
+    }
+
+    /// A page that stopped answering: replaced (`PiEngine.replacePage`), with the extensions that were working turned
+    /// off and the busy sessions' runs aborted, so whatever froze it doesn't run again; those sessions say why.
+    private func recoverFrozenEngine() async {
+        recovering = true
+        defer { recovering = false }
+        let busy = sessions.filter { $0.running || !$0.extensionTasks.isEmpty }
+        let culprits = Array(Set(busy.flatMap { $0.extensionTasks.map(\.extensionName) })).sorted()
+        log("engine", "no answer for 10 s\(culprits.isEmpty ? "" : " (\(culprits.joined(separator: ", ")) working)"): replacing its page")
+        recovery = (culprits, busy.map(\.id))
+        dialogs.removeAll()
+        for panel in panels { panel.page?.discard() }
+        panels.removeAll()
+        let began = Date()
+        do {
+            _ = try await engine.replacePage()
+            await open()
+            for id in apps.keys { await loadApps(id) }
+            log("engine", String(format: "page replaced in %.2fs", Date().timeIntervalSince(began)))
+        } catch {
+            fail(error.localizedDescription)
+        }
+        recovery = nil
+        let who = culprits.isEmpty ? nil : culprits.joined(separator: ", ")
+        for session in busy {
+            guard let index = index(of: session.id) else { continue }
+            sessions[index].running = false
+            sessions[index].extensionTasks = []
+            sessions[index].queued = []
+            sessions[index].draft = nil
+            sessions[index].tools = []
+            sessions[index].error = who.map {
+                "\($0) froze pi's engine, so pi restarted it and turned \($0) off (Settings → Extensions turns it back on). This session's run stopped."
+            } ?? "pi's engine stopped answering, so pi restarted it. This session's run stopped."
+        }
+        updateBackground()
     }
 
     /// Opens the durable store; sessions resume any run a previous launch or engine left unfinished.
@@ -518,6 +598,8 @@ final class AppModel {
                 // `-compactReserveTokens N`, `-compactKeepRecentTokens N`, `-compactBackgroundTokens N` (tests): automatic
                 // compaction's thresholds, over pi's.
                 "compaction": Self.compactionOverride(),
+                // After a frozen page (recoverFrozenEngine): what not to load or resume.
+                "recover": recovery.map { ["extensions": $0.extensions, "abort": $0.abort] as [String: Any] } ?? NSNull(),
             ]) as? [String: Any] ?? [:]
             // A session listed twice keeps its first entry rather than ending the app (uniqueKeysWithValues traps).
             let previous = Dictionary(sessions.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
@@ -1389,14 +1471,7 @@ final class AppModel {
     func abort(_ id: Int) {
         for dialog in dialogs where dialog.sessionId == id { respond(to: dialog, with: nil) }
         Task {
-            let stopping = Task { _ = try? await engine.command("session.abort", ["id": id]) }
-            let answered = await withTaskGroup(of: Bool.self) { group in
-                group.addTask { await stopping.value; return true }
-                group.addTask { try? await Task.sleep(for: .seconds(4)); return false }
-                let first = await group.next() ?? false
-                group.cancelAll()
-                return first
-            }
+            let answered = await finishes(within: .seconds(4)) { [engine] in _ = try? await engine.command("session.abort", ["id": id]) }
             guard !answered, let index = index(of: id) else { return }
             let holder = sessions[index].extensionTasks.first?.extensionName ?? "An extension"
             log("engine", "[\(id)] Stop unanswered for 4 s: \(holder) holds the engine")

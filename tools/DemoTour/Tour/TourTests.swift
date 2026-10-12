@@ -1493,6 +1493,54 @@ final class TourTests: XCTestCase {
         pause(1)
     }
 
+    /// The watchdog: an extension holding the engine (busytest's /busyfreeze, 60 seconds of code that never yields, sent
+    /// at launch) gets the engine's page replaced in about 15 seconds; the session then says busytest froze pi's engine
+    /// and was turned off, and busytest is off in Settings (turned back on at the end, as its switch does, for the next
+    /// run). SHARED_FILE is
+    /// busytest.piext. The test reads nothing while the engine is held: reading the app waits for the engine's page then.
+    func testEngineFreezeRecovery() throws {
+        executionTimeAllowance = 5 * 60
+        let path = try XCTUnwrap(ProcessInfo.processInfo.environment["SHARED_FILE"], "the test extension's .piext")
+        pi.launchArguments += ["-openSharedFile", path]
+        launchReady()
+        tap(pi.buttons["Add to Every Session"].firstMatch)
+        pause(2)
+        if pi.buttons["Done"].exists { pi.buttons["Done"].firstMatch.tap() }
+        // Only the session that freezes, to find afterwards.
+        deleteAllSessions()
+        pi.terminate()
+
+        pi.launchArguments = ["-engineCommands", #"extensions.setEnabled {"name":"busytest","enabled":true}"#, "-autorun", "/busyfreeze"]
+        pi.launch()
+        pause(45)
+
+        // The only session (a command doesn't name it).
+        let session = pi.staticTexts["New session"].firstMatch
+        XCTAssertTrue(session.waitForExistence(timeout: 20), "the session that froze, listed")
+        tap(session)
+        let froze = pi.staticTexts.matching(NSPredicate(format: "label CONTAINS %@", "froze pi's engine")).firstMatch
+        XCTAssertTrue(froze.waitForExistence(timeout: 10), "the session says what happened")
+        print("message: \(froze.label)")
+        XCTAssertTrue(froze.label.hasPrefix("busytest"), "names the extension")
+
+        backToSessions()
+        tap(pi.buttons["Settings"])
+        tap(pi.buttons["Extensions and skills"].firstMatch)
+        let toggle = pi.switches.matching(NSPredicate(format: "label BEGINSWITH %@", "busytest")).firstMatch
+        XCTAssertTrue(toggle.waitForExistence(timeout: 10), "busytest among the extensions")
+        print("busytest switch: \(toggle.value ?? "?")")
+        XCTAssertEqual(toggle.value as? String, "0", "turned off")
+        // Back on for the next run, as Settings' switch does (the engine's extensions.setEnabled).
+        pi.terminate()
+        pi.launchArguments = ["-engineCommands", #"extensions.setEnabled {"name":"busytest","enabled":true}"#]
+        launchReady()
+        tap(pi.buttons["Settings"])
+        tap(pi.buttons["Extensions and skills"].firstMatch)
+        let again = pi.switches.matching(NSPredicate(format: "label BEGINSWITH %@", "busytest")).firstMatch
+        XCTAssertTrue(again.waitForExistence(timeout: 10), "busytest among the extensions")
+        XCTAssertEqual(again.value as? String, "1", "back on")
+    }
+
     /// Stop ends an extension's work for the user, and the indicator names the extension: SHARED_FILE is busytest.piext
     /// (Fixtures/busytest.ts). A slow command shows as "busytest: /busywait", a message sent meanwhile shows at once, and
     /// Stop ends the command (it hears the abort). Two at once show as "2 extension tasks running", which opens to a row
@@ -1867,6 +1915,12 @@ final class TourTests: XCTestCase {
             choice.tap()
             pause(2)
         }
+        deleteAllSessions()
+        print("sessions list: \(pi.staticTexts.allElementsBoundByIndex.prefix(12).map(\.label))")
+    }
+
+    /// Clean Up → All sessions → Delete, on the sessions list.
+    private func deleteAllSessions() {
         let cleanUp = pi.buttons["Clean Up"]
         XCTAssertTrue(cleanUp.waitForExistence(timeout: 15), "the sessions list")
         let loaded = Date().addingTimeInterval(15)
@@ -1876,7 +1930,6 @@ final class TourTests: XCTestCase {
         tap(pi.buttons.matching(NSPredicate(format: "label BEGINSWITH 'All sessions'")).firstMatch)
         tap(pi.buttons.matching(NSPredicate(format: "label BEGINSWITH 'Delete'")).firstMatch)
         pause(3)
-        print("sessions list: \(pi.staticTexts.allElementsBoundByIndex.prefix(12).map(\.label))")
         XCTAssertFalse(pi.buttons["Clean Up"].isEnabled, "sessions remain")
     }
 

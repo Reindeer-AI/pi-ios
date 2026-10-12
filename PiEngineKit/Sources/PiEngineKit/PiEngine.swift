@@ -11,7 +11,10 @@ import WebKit
 public final class PiEngine: NSObject {
     public typealias ServiceHandler = @MainActor (_ method: String, _ params: Any?) async throws -> Any?
 
-    public let webView: WKWebView
+    /// The engine's page. `replacePage` swaps in a new one (`onPageReplaced` tells the host, which shows it).
+    public private(set) var webView: WKWebView
+    public var onPageReplaced: ((WKWebView) -> Void)?
+    private let configuration: WKWebViewConfiguration
     /// Engine events (`agent_events`, `submission_settled`, ...), as decoded JSON objects.
     public var onEvent: (([String: Any]) -> Void)?
     /// Console output forwarded from the engine.
@@ -62,10 +65,13 @@ public final class PiEngine: NSObject {
         configuration.preferences.inactiveSchedulingPolicy = .none
         configuration.setURLSchemeHandler(schemeHandler, forURLScheme: EngineSchemeHandler.scheme)
         configuration.userContentController.addScriptMessageHandler(bridge, contentWorld: .page, name: "pi")
-        webView = WKWebView(frame: CGRect(x: 0, y: 0, width: 1, height: 1), configuration: configuration)
+        self.configuration = configuration
+        webView = EngineWebView(frame: CGRect(x: 0, y: 0, width: 1, height: 1), configuration: configuration)
         webView.isInspectable = true
 
         super.init()
+        // Native answers only the current page: a replaced one that comes back to life can't act (two engines on one store).
+        schemeHandler.isCurrentPage = { [weak self] webView in webView === self?.webView }
         bridge.engine = self
         schemeHandler.syncHandler = { [weak self] service, method, params in
             guard let self else { throw EngineError.unknownService(service) }
@@ -76,6 +82,33 @@ public final class PiEngine: NSObject {
         registerBuiltInServices()
         schemeHandler.netProxy.onFailure = { [weak self] message in self?.onLog?("warn", "net: \(message)") }
     }
+
+    /// Replaces a page that stopped answering: code holding the engine's only thread (an extension's, say) can't be
+    /// interrupted from outside, so a new web view, with a content process of its own, takes over, and the old view goes.
+    /// Then loads the engine as `start` does. Storage is native: the host opens it again and the sessions come back, as
+    /// after a crash.
+    public func replacePage() async throws -> EngineEnvironment {
+        let old = webView
+        old.navigationDelegate = nil
+        old.uiDelegate = nil
+        old.stopLoading()
+        // Out of the window and no longer kept running while inactive, so iOS suspends its process (which nothing else
+        // can end), rather than let it spin on unseen.
+        old.configuration.preferences.inactiveSchedulingPolicy = .suspend
+        // Its own preferences, so the old page's change doesn't reach it.
+        let fresh = configuration.copy() as! WKWebViewConfiguration
+        fresh.preferences = WKPreferences()
+        fresh.preferences.inactiveSchedulingPolicy = .none
+        webView = EngineWebView(frame: old.frame, configuration: fresh)
+        webView.isInspectable = true
+        webView.navigationDelegate = self
+        webView.uiDelegate = self
+        onPageReplaced?(webView)
+        old.removeFromSuperview()
+        failStart(EngineError.contentProcessTerminated)
+        return try await start()
+    }
+
 
     /// Loads the engine and waits until it reports ready.
     public func start() async throws -> EngineEnvironment {
@@ -90,11 +123,18 @@ public final class PiEngine: NSObject {
     public func command(_ method: String, _ params: [String: Any] = [:]) async throws -> Any? {
         if !pageReady { await withCheckedContinuation { pageWaiters.append($0) } }
         do {
-            return try await webView.callAsyncJavaScript(
-                "return await window.__pi.command(method, params)",
-                arguments: ["method": method, "params": params],
-                contentWorld: .page
-            )
+            // The completion-handler form: a call waiting on a page that stopped answering doesn't keep its web view alive,
+            // so a replaced page closes (and WebKit ends its process) rather than spinning on unseen.
+            // Only the call holds the page, not this frame while it waits.
+            let answer: EngineAnswer = try await withCheckedThrowingContinuation { continuation in
+                webView.callAsyncJavaScript(
+                    "return await window.__pi.command(method, params)",
+                    arguments: ["method": method, "params": params],
+                    in: nil,
+                    in: .page
+                ) { result in continuation.resume(with: result.map { EngineAnswer(value: $0) }) }
+            }
+            return answer.value
         } catch let error as NSError {
             // WebKit reports "A JavaScript exception occurred"; the engine's own message is in the user info.
             if let message = error.userInfo["WKJavaScriptExceptionMessage"] as? String {
@@ -211,6 +251,16 @@ public enum EngineError: LocalizedError {
 
 /// Receives engine messages. Held weakly by the engine's user content controller through this object, so the
 /// controller does not retain the engine.
+/// The engine's page, saying when it's released (a replaced page should be, so WebKit closes it).
+final class EngineWebView: WKWebView {
+    deinit { NSLog("[engine] an engine page was released") }
+}
+
+/// A command's result (JSON-like values from WebKit), handed from WebKit's completion handler to the waiting call.
+private struct EngineAnswer: @unchecked Sendable {
+    let value: Any?
+}
+
 @MainActor
 final class EngineBridge: NSObject, WKScriptMessageHandlerWithReply {
     weak var engine: PiEngine?
@@ -225,6 +275,11 @@ final class EngineBridge: NSObject, WKScriptMessageHandlerWithReply {
               let method = body["method"] as? String
         else {
             replyHandler(nil, "Malformed engine message")
+            return
+        }
+        // A page the engine replaced (it stopped answering) gets no service, should it come back to life.
+        guard message.webView === engine?.webView else {
+            replyHandler(nil, "This engine page was replaced")
             return
         }
         Task { @MainActor [weak engine] in

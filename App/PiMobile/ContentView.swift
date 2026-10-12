@@ -1500,7 +1500,16 @@ private struct ExtensionTasksIndicator: View {
     @State private var expanded = false
 
     var body: some View {
-        if tasks.count == 1, let task = tasks.first {
+        // The engine says at once; a task shows once it takes a moment, so quick ones (a hook reading a message) don't flash.
+        TimelineView(.periodic(from: .now, by: 0.25)) { context in
+            tasksView(tasks.filter { context.date.timeIntervalSince($0.startedAt) >= 0.3 })
+        }
+    }
+
+    @ViewBuilder private func tasksView(_ tasks: [AppModel.ExtensionTask]) -> some View {
+        if tasks.isEmpty {
+            EmptyView()
+        } else if tasks.count == 1, let task = tasks.first {
             HStack(spacing: 6) {
                 WorkingIndicator(label: "\(task.extensionName): \(task.what)")
                 Elapsed(since: task.startedAt)
@@ -2409,6 +2418,12 @@ private struct EngineHostView: UIViewRepresentable {
         container.accessibilityElementsHidden = true
         engine.webView.frame = container.bounds
         container.addSubview(engine.webView)
+        // A page the engine replaced (it stopped answering) shows here instead.
+        engine.onPageReplaced = { [weak container] webView in
+            guard let container else { return }
+            webView.frame = container.bounds
+            container.addSubview(webView)
+        }
         return container
     }
 

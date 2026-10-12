@@ -18,9 +18,15 @@ final class EngineSchemeHandler: NSObject, WKURLSchemeHandler {
         self.bundleDirectory = bundleDirectory.standardizedFileURL
     }
 
+    /// Whether a web view is the engine's current page (`PiEngine.replacePage`): a replaced one gets no native service.
+    var isCurrentPage: ((WKWebView) -> Bool)?
+
     func webView(_ webView: WKWebView, start urlSchemeTask: any WKURLSchemeTask) {
         guard let url = urlSchemeTask.request.url, url.host == "app" else {
             return respond(urlSchemeTask, status: 404)
+        }
+        if url.path == "/net" || url.path == "/sync", isCurrentPage?(webView) == false {
+            return respond(urlSchemeTask, status: 410)
         }
         if url.path == "/net" {
             return netProxy.start(urlSchemeTask)

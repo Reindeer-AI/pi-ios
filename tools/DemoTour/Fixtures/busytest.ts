@@ -1,8 +1,8 @@
 /**
  * A test extension for testExtensionStop: /busywait works for 30 seconds, as a slow command does (asynchronously),
  * unless stopped (it honors ctx.signal); /busyignore does the same but ignores Stop; /busyexec runs sleep 30 through
- * pi.exec with ctx.signal; /busyblock holds the engine itself for 8 seconds (code that never yields). Each says how it
- * ended, as a notice.
+ * pi.exec with ctx.signal; /busyblock holds the engine itself for 8 seconds (code that never yields), /busyfreeze for 60
+ * (the app's watchdog replaces the engine's page and turns busytest off). Each says how it ended, as a notice.
  */
 export default function (pi: any) {
 	pi.registerCommand("busywait", {
@@ -30,6 +30,16 @@ export default function (pi: any) {
 		handler: async (_args: string, ctx: any) => {
 			const result = await pi.exec("sleep", ["30"], { signal: ctx.signal });
 			ctx.ui.notify(result.killed ? "busyexec: stopped" : `busyexec: exited ${result.code}`, "info");
+		},
+	});
+	pi.registerCommand("busyfreeze", {
+		description: "Hold the engine for 60 seconds",
+		handler: async (_args: string, ctx: any) => {
+			const end = Date.now() + 60000;
+			while (Date.now() < end) {
+				// Never yields: the app's watchdog replaces the engine's page.
+			}
+			ctx.ui.notify("busyfreeze: done", "info");
 		},
 	});
 	pi.registerCommand("busyblock", {

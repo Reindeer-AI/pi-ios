@@ -193,8 +193,17 @@ export class Extensions {
 		}
 	}
 
+	/** Extensions not to load this time: they froze the engine (the app replaced its page). */
+	private held = new Set<string>();
+
+	/** Keeps these extensions from loading until the engine starts again; they show why (extension_list). */
+	hold(names: string[]): void {
+		for (const name of names) this.held.add(name);
+	}
+
 	private async loadOrPlaceholder(record: ExtensionRecord, scope: Scope, sessionId?: number): Promise<void> {
 		try {
+			if (this.held.has(record.name)) throw new Error("turned off: it froze pi's engine, which pi then restarted");
 			await this.load(record, scope, sessionId);
 		} catch (error) {
 			// Keep the name resolvable so the session still runs; extension_list shows why it has no tools.
@@ -923,6 +932,8 @@ export class Extensions {
 
 	/** Turns a default on (loaded into every session that keeps it) or off (kept, loaded nowhere). */
 	async setDefaultEnabled(root: Conversation, name: string, enabled: boolean, context: Context): Promise<void> {
+		// Turned back on by the user: no longer held for freezing the engine.
+		if (enabled) this.held.delete(name);
 		let record: ExtensionRecord | undefined;
 		await root.commit(async (tx) => {
 			const doc = await tx.doc(DefaultExtensionsDoc, root.id);
@@ -1000,42 +1011,43 @@ export class Extensions {
 	}
 
 	/** What extensions are doing in each session for the user (commands, reading a message before it's sent), by task id. */
-	private forUserTasks = new Map<number, Map<number, { extension: string; what: string; startedAt: number; shown: boolean; controller: AbortController }>>();
+	private forUserTasks = new Map<number, Map<number, { extension: string; what: string; startedAt: number; controller: AbortController }>>();
 	private nextTask = 1;
 
 	/**
 	 * Runs an extension's handler as one of the session's tasks for the user, which Stop ends (`stopForUser`): the handler
 	 * gets the abort signal, and the session stops waiting for it even when it ignores the signal (`stopped` is then the
-	 * result). The app hears the session's tasks (`extension_tasks`) once a task takes a moment, so quick ones don't flash.
+	 * result). The app hears the session's tasks (`extension_tasks`) as they start and end; it shows the ones that take a
+	 * moment, so quick ones don't flash.
 	 */
 	private async forUser<T>(sessionId: number, extension: string, what: string, run: (signal: AbortSignal) => Promise<T>, stopped: T): Promise<T> {
 		const controller = new AbortController();
 		const id = this.nextTask++;
 		const tasks = this.forUserTasks.get(sessionId) ?? new Map();
 		this.forUserTasks.set(sessionId, tasks);
-		const task = { extension, what, startedAt: Date.now(), shown: false, controller };
+		const task = { extension, what, startedAt: Date.now(), controller };
 		tasks.set(id, task);
-		const show = setTimeout(() => {
-			task.shown = true;
-			this.announceTasks(sessionId);
-		}, 300);
+		// At once (the app shows a task once it takes a moment): if the extension then holds the engine, the app knows whose.
+		this.announceTasks(sessionId);
 		const aborted = new Promise<"stopped">((resolve) => controller.signal.addEventListener("abort", () => resolve("stopped"), { once: true }));
 		try {
 			const result = await Promise.race([run(controller.signal), aborted]);
 			return result === "stopped" && controller.signal.aborted ? stopped : (result as T);
 		} finally {
-			clearTimeout(show);
 			tasks.delete(id);
 			if (tasks.size === 0) this.forUserTasks.delete(sessionId);
-			if (task.shown) this.announceTasks(sessionId);
+			this.announceTasks(sessionId);
 		}
 	}
 
-	/** The session's tasks for the user that have taken a moment, for the app's indicator. */
+	/** The session's tasks for the user, for the app's indicator. */
 	private announceTasks(sessionId: number): void {
-		const tasks = [...(this.forUserTasks.get(sessionId)?.entries() ?? [])]
-			.filter(([, task]) => task.shown)
-			.map(([id, task]) => ({ id, extension: task.extension, what: task.what, startedAt: task.startedAt }));
+		const tasks = [...(this.forUserTasks.get(sessionId)?.entries() ?? [])].map(([id, task]) => ({
+			id,
+			extension: task.extension,
+			what: task.what,
+			startedAt: task.startedAt,
+		}));
 		emit({ type: "extension_tasks", sessionId, tasks });
 	}
 
