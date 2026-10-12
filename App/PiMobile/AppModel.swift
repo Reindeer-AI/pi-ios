@@ -1348,6 +1348,23 @@ final class AppModel {
         Task { _ = try? await engine.command("session.abort", ["id": id]) }
     }
 
+    /// Stops the run, whatever it's doing (a tool, writing, thinking), and sends `text` at once as the next prompt, after
+    /// any messages still queued (stopping drops them, so they go with it, in order, rather than being lost).
+    func sendNow(_ text: String, to id: Int) async {
+        guard let index = index(of: id) else { return }
+        let queued = sessions[index].queued
+        for message in queued { withdrawnSubmissions.insert(message.id) }
+        sessions[index].queued.removeAll()
+        // The stopped run's settling is no error: the user stopped it.
+        stoppedForSendNow.insert(id)
+        log("prompt", "[\(id)] send now: stopping the run")
+        _ = try? await engine.command("session.abort", ["id": id])
+        await send((queued.map(\.text) + [text]).joined(separator: "\n\n"), to: id)
+    }
+
+    /// Sessions whose run Send now stopped: its submission settling unanswered shows no error.
+    private var stoppedForSendNow: Set<Int> = []
+
     func setModel(_ model: ModelRef, for id: Int) async {
         let result = try? await engine.command("session.setModel", ["id": id, "provider": model.provider, "modelId": model.modelId]) as? [String: Any]
         if let index = index(of: id) {
@@ -1710,7 +1727,9 @@ final class AppModel {
                 wasQueued = sessions[index].queued.contains { $0.id == submission } || withdrawnSubmissions.remove(submission) != nil
                 sessions[index].queued.removeAll { $0.id == submission }
             }
-            if let index = index(of: id), status != "done", !wasQueued {
+            // The run Send now stopped settles unanswered: no error over the new run.
+            let stoppedOnPurpose = status == "unanswered" && id.map { stoppedForSendNow.remove($0) != nil } == true
+            if let index = index(of: id), status != "done", !wasQueued, !stoppedOnPurpose {
                 sessions[index].error = record["reason"] as? String == "no_model"
                     ? "\(displayName(of: sessions[index].model)) isn't available. Choose another model from the title."
                     : localRunsInBackground.contains(sessions[index].id)

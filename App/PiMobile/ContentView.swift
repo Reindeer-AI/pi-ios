@@ -700,8 +700,20 @@ private struct SessionView: View {
         send(.steer)
     }
 
+    /// Stops the run, whatever it's doing, and sends the message at once.
+    private func sendNow() {
+        guard let text = takeMessage() else { return }
+        Task { await app.sendNow(text, to: id) }
+    }
+
     /// While the agent works, a message steers it (after its current tool call) or waits for the run to end.
     private func send(_ delivery: AppModel.Delivery) {
+        guard let text = takeMessage() else { return }
+        Task { await app.send(text, to: id, delivery: delivery) }
+    }
+
+    /// The message to send, with its attached files (moved into the session's workspace, named in it); the box empties.
+    private func takeMessage() -> String? {
         dictation.stop()
         var text = prompt
         // Attached files go into the session's workspace; the message names them for the model.
@@ -712,12 +724,12 @@ private struct SessionView: View {
                 attachments = []
             } catch {
                 log("error", "[\(id)] attach: \(error.localizedDescription)")
-                return
+                return nil
             }
         }
         prompt = ""
         following = true
-        Task { await app.send(text, to: id, delivery: delivery) }
+        return text
     }
 
     /// Picked files and photos, copied aside until the message is sent.
@@ -808,7 +820,9 @@ private struct SessionView: View {
                 // Steer the run in progress; hold for "after this run".
                 if canSend {
                     Menu {
-                        Button("Steer now", systemImage: "arrow.turn.down.right") { send(.steer) }
+                        // Stops whatever pi is doing, and sends at once.
+                        Button("Send now", systemImage: "bolt.fill") { sendNow() }
+                        Button("Steer after this step", systemImage: "arrow.turn.down.right") { send(.steer) }
                         Button("Send after this run", systemImage: "text.badge.plus") { send(.followUp) }
                     } label: {
                         Image(systemName: "arrow.up.circle.fill").font(.title)

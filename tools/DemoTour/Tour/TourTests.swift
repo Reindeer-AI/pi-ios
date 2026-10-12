@@ -1493,6 +1493,51 @@ final class TourTests: XCTestCase {
         pause(1)
     }
 
+    /// Send now (the Steer button's menu) stops the run mid-tool and sends at once: a 30-second sleep ends within seconds,
+    /// the message queued before it goes with it (one prompt, in order), nothing stays queued, no error shows, and the
+    /// model answers the new prompt. Needs a model that runs tools.
+    func testSendNow() throws {
+        executionTimeAllowance = 6 * 60
+        launchReady()
+        tap(pi.buttons["New session"].firstMatch)
+        pause(1.5)
+        let message = pi.textFields["Message pi"]
+        let stop = pi.buttons["Stop"].firstMatch
+        tap(message)
+        message.typeText("Use the bash tool to run exactly: sleep 30. Then reply with exactly the word late.")
+        tap(pi.buttons["Send"].firstMatch)
+        XCTAssertTrue(stop.waitForExistence(timeout: 20), "the run")
+        let sleeping = pi.staticTexts.matching(NSPredicate(format: "label CONTAINS %@", "sleep 30")).firstMatch
+        XCTAssertTrue(sleeping.waitForExistence(timeout: 60), "the sleep running")
+        let field = pi.textFields.firstMatch
+        // One queued first (Steer), then Send now.
+        tap(field)
+        field.typeText("Remember the word one.")
+        tap(pi.buttons["Steer"].firstMatch)
+        XCTAssertTrue(pi.staticTexts["Steering: after the current step"].waitForExistence(timeout: 3), "queued")
+        tap(field)
+        field.typeText("Reply with exactly the words one now.")
+        pi.buttons["Steer"].firstMatch.press(forDuration: 1.0)
+        let sent = Date()
+        tap(pi.buttons["Send now"].firstMatch)
+
+        let combined = pi.staticTexts.matching(NSPredicate(format: "label CONTAINS %@ AND label CONTAINS %@", "Remember the word one.", "Reply with exactly the words one now.")).firstMatch
+        XCTAssertTrue(combined.waitForExistence(timeout: 15), "one prompt: the queued message, then the new one")
+        XCTAssertFalse(pi.staticTexts["Steering: after the current step"].exists, "nothing left queued")
+        let answer = pi.staticTexts.matching(NSPredicate(format: "label CONTAINS[c] %@", "one now")).allElementsBoundByIndex
+        let end = Date().addingTimeInterval(90)
+        while stop.exists && Date() < end { pause(0.5) }
+        let took = Date().timeIntervalSince(sent)
+        print("send now to the answer: \(Int(took)) s; answers: \(answer.count)")
+        XCTAssertLessThan(took, 25, "the 30-second sleep stopped, not waited out")
+        let reply = pi.staticTexts.matching(NSPredicate(format: "label ==[c] %@ OR label ==[c] %@", "one now", "one now.")).firstMatch
+        XCTAssertTrue(reply.waitForExistence(timeout: 10), "the model answered the new prompt")
+        XCTAssertFalse(pi.staticTexts.matching(NSPredicate(format: "label ==[c] %@", "late")).firstMatch.exists, "the stopped run didn't answer")
+        for word in ["aborted", "unanswered"] {
+            XCTAssertFalse(pi.staticTexts.matching(NSPredicate(format: "label CONTAINS[c] %@", word)).firstMatch.exists, "no error")
+        }
+    }
+
     /// A message sent during a run shows at once, queued ("Steering: after the current step"), and becomes the user's
     /// message when the agent takes it; one taken back (Cancel) leaves the queue, its text back in the message box, with
     /// no error and no message in the transcript. Needs a model that runs tools.
