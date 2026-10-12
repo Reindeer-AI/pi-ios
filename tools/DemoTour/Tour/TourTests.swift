@@ -1493,6 +1493,37 @@ final class TourTests: XCTestCase {
         pause(1)
     }
 
+    /// The watchdog when an extension freezes the engine as it loads: SHARED_FILE is loadfreeze.piext
+    /// (Fixtures/loadfreeze.ts, 60 seconds of top-level code that never yields). Added, it holds the engine; the page is
+    /// replaced, an alert names loadfreeze, it isn't loaded again (it never got added, or it's off), and pi works. Then
+    /// it's removed. Nothing is read while the engine is held: reading the app waits for the engine's page then.
+    func testEngineFreezeOnLoad() throws {
+        executionTimeAllowance = 5 * 60
+        let path = try XCTUnwrap(ProcessInfo.processInfo.environment["SHARED_FILE"], "the test extension's .piext")
+        pi.launchArguments += ["-openSharedFile", path]
+        launchReady()
+        tap(pi.buttons["Add to Every Session"].firstMatch)
+        pause(45)
+        let alert = pi.alerts["loadfreeze froze pi's engine"]
+        XCTAssertTrue(alert.waitForExistence(timeout: 15), "an alert says what happened")
+        print("alert: \(alert.staticTexts.allElementsBoundByIndex.map(\.label))")
+        alert.buttons["OK"].tap()
+        pause(1)
+        if pi.buttons["Done"].exists { pi.buttons["Done"].firstMatch.tap() }
+        backToSessions()
+        tap(pi.buttons["Settings"])
+        tap(pi.buttons["Extensions and skills"].firstMatch)
+        XCTAssertTrue(pi.switches.firstMatch.waitForExistence(timeout: 15), "the extensions, listed (pi works)")
+        // It froze as it was being added, so it isn't (or, if it got that far, it's off): never loaded again.
+        let toggle = pi.switches.matching(NSPredicate(format: "label BEGINSWITH %@", "loadfreeze")).firstMatch
+        print("loadfreeze listed: \(toggle.exists)\(toggle.exists ? " = \(toggle.value ?? "?")" : "")")
+        if toggle.exists { XCTAssertEqual(toggle.value as? String, "0", "turned off, not loaded again") }
+        // Removed, for the next run.
+        pi.terminate()
+        pi.launchArguments = ["-engineCommands", #"extensions.remove {"name":"loadfreeze"}"#]
+        launchReady()
+    }
+
     /// The watchdog: an extension holding the engine (busytest's /busyfreeze, 60 seconds of code that never yields, sent
     /// at launch) gets the engine's page replaced in about 15 seconds; the session then says busytest froze pi's engine
     /// and was turned off, and busytest is off in Settings (turned back on at the end, as its switch does, for the next

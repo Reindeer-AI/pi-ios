@@ -218,6 +218,16 @@ export class Extensions {
 
 	/** Loads (or reloads) a recorded extension and installs it in the registry. */
 	async load(record: ExtensionRecord, scope: Scope, sessionId?: number): Promise<Loaded> {
+		// The app hears whose code is loading: one that freezes the engine as it loads is the one turned off.
+		emit({ type: "extension_loading", extension: record.name });
+		try {
+			return await this.loadNow(record, scope, sessionId);
+		} finally {
+			emit({ type: "extension_loading", extension: null });
+		}
+	}
+
+	private async loadNow(record: ExtensionRecord, scope: Scope, sessionId?: number): Promise<Loaded> {
 		const name = Extensions.registryName(scope, record.name, sessionId);
 		const base = scope === "default" ? this.neutralEnv : this.sessionEnv(sessionId!);
 		// Its process.env carries the secrets the user lets it read.

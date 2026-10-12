@@ -512,6 +512,8 @@ final class AppModel {
     private var recovering = false
     /// What the next `open` tells the engine after a frozen page: the extensions to keep off, the runs to abort.
     private var recovery: (extensions: [String], abort: [Int])?
+    /// The extension the engine is loading, if any: one that freezes it as it loads is the one to turn off.
+    private var loadingExtension: String?
 
     private func startWatchdog() {
         guard watchdog == nil else { return }
@@ -552,7 +554,8 @@ final class AppModel {
         recovering = true
         defer { recovering = false }
         let busy = sessions.filter { $0.running || !$0.extensionTasks.isEmpty }
-        let culprits = Array(Set(busy.flatMap { $0.extensionTasks.map(\.extensionName) })).sorted()
+        let culprits = Array(Set(busy.flatMap { $0.extensionTasks.map(\.extensionName) } + [loadingExtension].compactMap { $0 })).sorted()
+        loadingExtension = nil
         log("engine", "no answer for 10 s\(culprits.isEmpty ? "" : " (\(culprits.joined(separator: ", ")) working)"): replacing its page")
         recovery = (culprits, busy.map(\.id))
         dialogs.removeAll()
@@ -581,6 +584,11 @@ final class AppModel {
             } ?? "pi's engine stopped answering, so pi restarted it. This session's run stopped."
         }
         updateBackground()
+        // No session was busy (an extension froze the engine as it loaded, say): an alert says what happened instead.
+        if busy.isEmpty, let who {
+            await UserDialog.alert(title: "\(who) froze pi's engine",
+                                   message: "pi restarted the engine and kept \(who) from running again (if it's installed, it's off in Settings → Extensions).")
+        }
     }
 
     /// Opens the durable store; sessions resume any run a previous launch or engine left unfinished.
@@ -1879,6 +1887,8 @@ final class AppModel {
                 if case .assistant(_, let text, _, _, _) = sessions[index].items.last { log("answer", "[\(id)] \(text)") }
                 if localModel.model != nil { log("local-model", "after run: \(localModel.memoryReport())") }
             }
+        case "extension_loading":
+            loadingExtension = event["extension"] as? String
         case "extension_tasks":
             guard let index = index(of: event["sessionId"] as? Int) else { return }
             sessions[index].extensionTasks = (event["tasks"] as? [[String: Any]] ?? []).compactMap { task in
