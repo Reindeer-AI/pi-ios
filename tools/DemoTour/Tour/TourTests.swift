@@ -1493,6 +1493,63 @@ final class TourTests: XCTestCase {
         pause(1)
     }
 
+    /// A message sent during a run shows at once, queued ("Steering: after the current step"), and becomes the user's
+    /// message when the agent takes it; one taken back (Cancel) leaves the queue, its text back in the message box, with
+    /// no error and no message in the transcript. Needs a model that runs tools.
+    func testQueuedSteering() throws {
+        executionTimeAllowance = 8 * 60
+        launchReady()
+        tap(pi.buttons["New session"].firstMatch)
+        pause(1.5)
+        let message = pi.textFields["Message pi"]
+        let stop = pi.buttons["Stop"].firstMatch
+        let queuedLabel = pi.staticTexts["Steering: after the current step"]
+        func runSleep(_ word: String) {
+            tap(message)
+            message.typeText("Use the bash tool to run exactly: sleep 12. Then reply with exactly the word \(word).")
+            tap(pi.buttons["Send"].firstMatch)
+            XCTAssertTrue(stop.waitForExistence(timeout: 20), "the run")
+            let tool = pi.staticTexts.matching(NSPredicate(format: "label CONTAINS %@", "sleep 12")).firstMatch
+            XCTAssertTrue(tool.waitForExistence(timeout: 60), "the sleep running")
+        }
+        func steer(_ text: String) {
+            let field = pi.textFields.firstMatch
+            tap(field)
+            field.typeText(text)
+            tap(pi.buttons["Steer"].firstMatch)
+        }
+
+        runSleep("done")
+        steer("Also add the word hi.")
+        XCTAssertTrue(queuedLabel.waitForExistence(timeout: 3), "queued at once, before the agent takes it")
+        XCTAssertTrue(pi.staticTexts["Also add the word hi."].exists, "its text, queued")
+        // Taken at the run's next step: the queue empties and the message stays, as the user's.
+        let taken = Date().addingTimeInterval(90)
+        while queuedLabel.exists && Date() < taken { pause(1) }
+        XCTAssertFalse(queuedLabel.exists, "taken by the agent")
+        XCTAssertTrue(pi.staticTexts["Also add the word hi."].exists, "now the user's message")
+        let end = Date().addingTimeInterval(2 * 60)
+        while stop.exists && Date() < end { pause(1) }
+        pause(2)
+
+        runSleep("second")
+        steer("This one is taken back.")
+        XCTAssertTrue(queuedLabel.waitForExistence(timeout: 3), "queued")
+        tap(pi.buttons["Cancel queued message"].firstMatch)
+        pause(1.5)
+        XCTAssertFalse(queuedLabel.exists, "out of the queue")
+        let box = pi.textFields.firstMatch.value as? String ?? ""
+        print("box after cancel: \(box)")
+        XCTAssertTrue(box.contains("This one is taken back."), "its text back in the message box")
+        let end2 = Date().addingTimeInterval(2 * 60)
+        while stop.exists && Date() < end2 { pause(1) }
+        pause(2)
+        // In the message box (a text field), not in the transcript (a text).
+        XCTAssertEqual(pi.staticTexts.matching(NSPredicate(format: "label == %@", "This one is taken back.")).count, 0, "not in the transcript")
+        XCTAssertFalse(pi.staticTexts.matching(NSPredicate(format: "label CONTAINS[c] %@", "aborted")).firstMatch.exists, "no error")
+        XCTAssertFalse(pi.staticTexts.matching(NSPredicate(format: "label CONTAINS[c] %@", "unanswered")).firstMatch.exists, "no error")
+    }
+
     /// Typing during a run, letter by letter, past the point where the message wraps and the buttons beside it go two by
     /// two (Stop and Steer take room then): the layout settles (each keystroke waits for the app to idle, which a layout
     /// flipping back and forth never does) and the box holds what was typed. Then shorter again, and empty.

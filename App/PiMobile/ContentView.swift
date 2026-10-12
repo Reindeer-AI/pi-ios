@@ -406,6 +406,9 @@ private struct SessionView: View {
                         } else if session.running, session.draft == nil, session.tools.isEmpty {
                             WorkingIndicator(label: "Working")
                         }
+                        ForEach(session.queued) { queued in
+                            QueuedMessageRow(message: queued) { Task { await app.withdraw(queued, in: id) } }
+                        }
                         if let error = session.error {
                             Label(error, systemImage: "exclamationmark.triangle").font(.footnote).foregroundStyle(.red)
                         }
@@ -464,6 +467,7 @@ private struct SessionView: View {
                 }
             }
             .onChange(of: session?.items.count) { if following { proxy.scrollTo("bottom") } }
+            .onChange(of: session?.queued.count) { if following { proxy.scrollTo("bottom") } }
             .onChange(of: session?.draft?.text) { if following { proxy.scrollTo("bottom") } }
             .overlay(alignment: .top) {
                 if let notice = session?.notice {
@@ -1073,6 +1077,35 @@ private struct ComposerButtons: Layout {
             let y = bounds.minY + grid.rows[..<row].reduce(0, +) + 8 * CGFloat(row) + grid.rows[row] / 2
             subview.place(at: CGPoint(x: x, y: y), anchor: .center, proposal: .unspecified)
         }
+    }
+}
+
+/// A message sent during a run that the agent hasn't taken yet: a steer (after its current step) or a follow-up (after
+/// the run), faded and outlined, with a button to take it back.
+private struct QueuedMessageRow: View {
+    let message: AppModel.QueuedMessage
+    let withdraw: () -> Void
+
+    var body: some View {
+        VStack(alignment: .trailing, spacing: 4) {
+            Text(Attachments.split(message.text).text)
+                .padding(.horizontal, 14)
+                .padding(.vertical, 10)
+                .foregroundStyle(.secondary)
+                .background(.tint.opacity(0.06), in: .rect(cornerRadius: 18))
+                .overlay(RoundedRectangle(cornerRadius: 18).strokeBorder(.tint.opacity(0.4), style: StrokeStyle(lineWidth: 1, dash: [4, 3])))
+            HStack(spacing: 10) {
+                Label(message.delivery == .steer ? "Steering: after the current step" : "Queued: after this run",
+                      systemImage: message.delivery == .steer ? "arrow.turn.down.right" : "text.badge.plus")
+                    .font(.caption2)
+                    .foregroundStyle(.secondary)
+                Button("Cancel", action: withdraw)
+                    .font(.caption2)
+                    .accessibilityLabel("Cancel queued message")
+            }
+        }
+        .padding(.leading, 48)
+        .frame(maxWidth: .infinity, alignment: .trailing)
     }
 }
 

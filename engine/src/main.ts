@@ -664,7 +664,28 @@ onCommand("session.prompt", async ({ id, text: typed, whenBusy, requestId }: { i
 	await updateSession(id, (session) => {
 		if (session.title === NEW_SESSION_TITLE) session.title = text.replace(/\s+/g, " ").trim().slice(0, 48);
 	});
-	return { submissionId: submission.id };
+	// During a run it waits: a steer for the run's next step, a follow-up for its end. The app shows it as queued (the
+	// text as submitted, after extensions) until it's in the transcript (`session.queued`).
+	const queued = (await submission.status(context)).status === "queued";
+	return { submissionId: submission.id, queued, text };
+});
+
+/** Which of these submissions still wait in the queue (not in the transcript yet, nor dropped). */
+onCommand("session.queued", async ({ ids }: { ids: number[] }) => {
+	const { harness } = requireEngine();
+	const queued: number[] = [];
+	for (const id of ids ?? []) {
+		const submission = await harness.submission(id as Parameters<typeof harness.submission>[0], context);
+		if (submission && (await submission.status(context)).status === "queued") queued.push(id);
+	}
+	return { queued };
+});
+
+/** Takes back a queued message: "aborted", or "already_placed" / "settled" when it's too late. */
+onCommand("session.withdraw", async ({ submissionId }: { submissionId: number }) => {
+	const { harness } = requireEngine();
+	const submission = await harness.submission(submissionId as Parameters<typeof harness.submission>[0], context);
+	return { result: submission ? await submission.abort(context) : "settled" };
 });
 
 /** The slash commands the session's extensions registered. */

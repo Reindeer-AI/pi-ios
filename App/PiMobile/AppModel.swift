@@ -41,6 +41,8 @@ final class AppModel {
         /// When the user last sent it a message (its creation, for sessions from before this was kept).
         var lastActive: Date
         var items: [TranscriptItem] = []
+        /// Messages sent during a run that the agent hasn't taken yet, shown after the transcript until it does.
+        var queued: [QueuedMessage] = []
         var draft: DraftMessage?
         var tools: [ToolRun] = []
         var running = false
@@ -89,6 +91,14 @@ final class AppModel {
         let message: String
         let level: String
         let date = Date()
+    }
+
+    /// A message sent during a run, waiting: a steer for the run's next step, a follow-up for its end.
+    struct QueuedMessage: Identifiable, Equatable {
+        /// Its submission.
+        let id: Int
+        let text: String
+        let delivery: Delivery
     }
 
     struct EditorText: Equatable {
@@ -1203,6 +1213,10 @@ final class AppModel {
         var params: [String: Any] = ["id": id, "text": text, "whenBusy": delivery.rawValue]
         if let requestID { params["requestId"] = requestID.uuidString }
         let result = try await engine.command("session.prompt", params) as? [String: Any]
+        // Waiting for the run: shown as queued until it's in the transcript (or dropped).
+        if result?["queued"] as? Bool == true, let submission = result?["submissionId"] as? Int, let index = self.index(of: id) {
+            sessions[index].queued.append(QueuedMessage(id: submission, text: result?["text"] as? String ?? text, delivery: delivery))
+        }
         // A `!command`, an extension's `/command`, or a prompt an extension took (pi's `input` event): no run starts.
         if result?["submissionId"] is NSNull, let index = self.index(of: id) {
             sessions[index].running = false
@@ -1212,6 +1226,32 @@ final class AppModel {
             return nil
         }
         return result?["submissionId"] as? Int
+    }
+
+    /// Takes back a queued message, whose text goes back to the message box; too late (the agent took it), it stays.
+    func withdraw(_ message: QueuedMessage, in id: Int) async {
+        let result = try? await engine.command("session.withdraw", ["submissionId": message.id]) as? [String: Any]
+        guard let index = index(of: id) else { return }
+        if result?["result"] as? String == "aborted" {
+            withdrawnSubmissions.insert(message.id)
+            sessions[index].queued.removeAll { $0.id == message.id }
+            sessions[index].editorText = EditorText(text: message.text, append: true)
+        } else {
+            await refreshQueued(id)
+        }
+    }
+
+    /// Submissions taken back, whose settling (unanswered) is no error.
+    private var withdrawnSubmissions: Set<Int> = []
+
+    /// Drops the queued messages that are in the transcript now, or were dropped (a run stopped), as the engine says.
+    private func refreshQueued(_ id: Int) async {
+        guard let index = index(of: id), !sessions[index].queued.isEmpty else { return }
+        let ids = sessions[index].queued.map(\.id)
+        guard let result = try? await engine.command("session.queued", ["ids": ids]) as? [String: Any],
+              let waiting = result["queued"] as? [Int], let index = self.index(of: id)
+        else { return }
+        sessions[index].queued.removeAll { !waiting.contains($0.id) }
     }
 
     func submitFromWatch(_ text: String, sessionID: Int, requestID: UUID) async throws -> Int? {
@@ -1663,7 +1703,14 @@ final class AppModel {
             let record = event["record"] as? [String: Any] ?? [:]
             let id = event["sessionId"] as? Int
             let status = record["status"] as? String ?? "?"
-            if let index = index(of: id), status != "done" {
+            // A queued message dropped (taken back, or its run stopped) is no error: it just leaves the queue.
+            let submission = record["id"] as? Int
+            var wasQueued = false
+            if let index = index(of: id), let submission {
+                wasQueued = sessions[index].queued.contains { $0.id == submission } || withdrawnSubmissions.remove(submission) != nil
+                sessions[index].queued.removeAll { $0.id == submission }
+            }
+            if let index = index(of: id), status != "done", !wasQueued {
                 sessions[index].error = record["reason"] as? String == "no_model"
                     ? "\(displayName(of: sessions[index].model)) isn't available. Choose another model from the title."
                     : localRunsInBackground.contains(sessions[index].id)
@@ -1827,6 +1874,12 @@ final class AppModel {
             guard let entry = event["entry"] as? [String: Any], let item = TranscriptItem(entry: entry) else { return }
             if case .assistant = item { sessions[index].draft = nil }
             if !sessions[index].items.contains(where: { $0.id == item.id }) { sessions[index].items.append(item) }
+            // A queued message the agent took: in the transcript now (by its text at once, then as the engine says).
+            if case .user(_, let text) = item, !sessions[index].queued.isEmpty {
+                if let taken = sessions[index].queued.firstIndex(where: { $0.text == text }) { sessions[index].queued.remove(at: taken) }
+                let id = sessions[index].id
+                Task { await refreshQueued(id) }
+            }
         case "tool_execution_start":
             let tool = ToolRun(id: event["toolCallId"] as? String ?? "", name: event["toolName"] as? String ?? "",
                                arguments: TranscriptItem.arguments(event["args"]))
