@@ -29,7 +29,7 @@ import { locationApi, notifyApi } from "../device.ts";
 import { mcpApi } from "../mcp.ts";
 import { extensionOf, secretEnv, secretsApi } from "../secrets.ts";
 import type { JsonValue } from "@earendil-works/chord";
-import { BACKGROUND_CONTEXT } from "@earendil-works/chord/context";
+import { BACKGROUND_CONTEXT, withAbortSignal } from "@earendil-works/chord/context";
 import * as piAi from "@earendil-works/pi-ai";
 import * as piAiCompat from "@earendil-works/pi-ai/compat";
 import * as piAiModels from "@earendil-works/pi-ai/models";
@@ -542,10 +542,11 @@ class PiExtension implements Adapted {
 			},
 			getSessionName: () => instance.sessionName,
 			setLabel: () => {},
-			exec: (command: string, args: string[] = [], options: { cwd?: string; timeout?: number } = {}) => {
+			// options.signal: an abort (the user's Stop, passed on) ends the command.
+			exec: (command: string, args: string[] = [], options: { cwd?: string; timeout?: number; signal?: AbortSignal } = {}) => {
 				const env = this.env(instance);
 				const withSecrets = { ...env, env: { ...env.env, ...secretEnv(extensionOf(this.name)) } };
-				return runCommand([command, ...args].map(quote).join(" "), options.cwd ?? env.cwd, withSecrets, options.timeout);
+				return runCommand([command, ...args].map(quote).join(" "), options.cwd ?? env.cwd, withSecrets, options.timeout, options.signal);
 			},
 			// iOS: the Keychain-backed secrets this extension may read, and its own (secrets.ts).
 			secrets: secretsApi(extensionOf(this.name)),
@@ -1641,10 +1642,11 @@ function logError(name: string) {
 }
 
 /** `pi.exec`: runs a command in the session's shell, as pi-coding-agent's exec does (output and exit code). */
-async function runCommand(command: string, cwd: string, context: NodeContext, timeout?: number) {
+async function runCommand(command: string, cwd: string, context: NodeContext, timeout?: number, signal?: AbortSignal) {
 	const env = new NativeExecutionEnv({ cwd, home: context.home, environment: context.env });
 	let stdout = "";
-	const result = await env.exec(command, { timeout: timeout ? timeout / 1000 : undefined, onOutput: (text) => (stdout += text) }, BACKGROUND_CONTEXT);
+	const running = signal ? withAbortSignal(signal, BACKGROUND_CONTEXT) : BACKGROUND_CONTEXT;
+	const result = await env.exec(command, { timeout: timeout ? timeout / 1000 : undefined, onOutput: (text) => (stdout += text) }, running);
 	return result.ok
 		? { stdout, stderr: "", code: result.value.exitCode, killed: false }
 		: { stdout, stderr: result.error.message, code: 1, killed: result.error.code === "timeout" || result.error.code === "aborted" };

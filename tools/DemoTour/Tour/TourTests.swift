@@ -1496,7 +1496,8 @@ final class TourTests: XCTestCase {
     /// Stop ends an extension's work for the user, and the indicator names the extension: SHARED_FILE is busytest.piext
     /// (Fixtures/busytest.ts). A slow command shows as "busytest: /busywait", a message sent meanwhile shows at once, and
     /// Stop ends the command (it hears the abort). Two at once show as "2 extension tasks running", which opens to a row
-    /// each with its own Stop. One that ignores Stop still frees the session at once. (/busyblock, holding the engine
+    /// each with its own Stop. One that ignores Stop still frees the session at once. pi.exec given ctx.signal ends its
+    /// shell command on Stop. (/busyblock, holding the engine
     /// itself, is for trying by hand: a UI test can't act meanwhile, as reading the app waits for the engine's page.)
     func testExtensionStop() throws {
         executionTimeAllowance = 6 * 60
@@ -1551,6 +1552,14 @@ final class TourTests: XCTestCase {
         while (ignoring.exists || stop.exists) && Date() < freed { pause(0.3) }
         XCTAssertFalse(ignoring.exists, "the session freed though the command ignores Stop")
         XCTAssertFalse(stop.exists, "nothing to stop any more")
+        pause(2)
+
+        // pi.exec with ctx.signal: Stop ends the shell command too.
+        command("/busyexec")
+        XCTAssertTrue(pi.staticTexts["busytest: /busyexec"].waitForExistence(timeout: 5), "running sleep 30")
+        pause(1)
+        tap(stop)
+        XCTAssertTrue(notice("busyexec: stopped").waitForExistence(timeout: 5), "the shell command ended by Stop")
         pause(2)
 
         let end = Date().addingTimeInterval(60)
