@@ -134,7 +134,7 @@ export interface Adapted {
 	/** The slash commands this extension registered in a session. */
 	commands(conversationId: number): Promise<{ name: string; description?: string }[]>;
 	/** Runs a slash command in a session; false when this extension has no such command. */
-	runCommand(conversationId: number, name: string, args: string): Promise<boolean>;
+	runCommand(conversationId: number, name: string, args: string, signal?: AbortSignal): Promise<boolean>;
 	/** The apps this extension registered in a session (`pi.registerApp`). */
 	apps(conversationId: number): Promise<AppDefinition[]>;
 	/** The apps it registers, as its first instance did (for sharing it). */
@@ -810,7 +810,7 @@ class PiExtension implements Adapted {
 		return [...instance.commands].map(([name, command]) => ({ name, description: command.description }));
 	}
 
-	async runCommand(conversationId: number, name: string, args: string): Promise<boolean> {
+	async runCommand(conversationId: number, name: string, args: string, signal?: AbortSignal): Promise<boolean> {
 		if (!this.commandNames.has(name)) return false;
 		const instance = await this.instance(conversationId);
 		const command = instance.commands.get(name);
@@ -818,8 +818,9 @@ class PiExtension implements Adapted {
 		await this.prepare(instance);
 		const missing = (what: string) => this.unsupported.add(what);
 		// pi's `ExtensionCommandContext`: the context plus session operations.
+		// ctx.signal: aborted when the user stops the command (Stop).
 		const ctx = {
-			...this.context(instance, { idle: true }),
+			...this.context(instance, { idle: true, signal }),
 			getSystemPromptOptions: () => ({}),
 			waitForIdle: async () => (await this.conversation(conversationId))?.waitForIdle(BACKGROUND_CONTEXT),
 			fork: async (entryId: string, options?: { withSession?: unknown }) => {

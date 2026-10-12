@@ -401,7 +401,10 @@ private struct SessionView: View {
                         ForEach(session.tools) { tool in
                             ToolCard(name: tool.name, arguments: tool.arguments, output: tool.output, isError: false, running: true)
                         }
-                        if session.compacting {
+                        if !session.extensionTasks.isEmpty {
+                            // Extensions, not the agent: each one's name and what it's doing (its command, say).
+                            ExtensionTasksIndicator(tasks: session.extensionTasks) { app.stopTask($0, in: id) }
+                        } else if session.compacting {
                             WorkingIndicator(label: "Compacting context")
                         } else if session.running, session.draft == nil, session.tools.isEmpty {
                             WorkingIndicator(label: "Working")
@@ -814,7 +817,7 @@ private struct SessionView: View {
                     // Shorter than when it wrapped: back to one row (where, if it still wraps, it goes two by two again).
                     if messageWraps, text.count < wrappedAt { messageWraps = false }
                 }
-            if session?.running == true {
+            if session?.running == true || session?.extensionTasks.isEmpty == false {
                 Button("Stop", systemImage: "stop.circle.fill") { app.abort(id) }
                     .labelStyle(.iconOnly).font(.title).tint(.red)
                 // Steer the run in progress; hold for "after this run".
@@ -1109,13 +1112,18 @@ private struct QueuedMessageRow: View {
                 .background(.tint.opacity(0.06), in: .rect(cornerRadius: 18))
                 .overlay(RoundedRectangle(cornerRadius: 18).strokeBorder(.tint.opacity(0.4), style: StrokeStyle(lineWidth: 1, dash: [4, 3])))
             HStack(spacing: 10) {
-                Label(message.delivery == .steer ? "Steering: after the current step" : "Queued: after this run",
-                      systemImage: message.delivery == .steer ? "arrow.turn.down.right" : "text.badge.plus")
-                    .font(.caption2)
-                    .foregroundStyle(.secondary)
-                Button("Cancel", action: withdraw)
-                    .font(.caption2)
-                    .accessibilityLabel("Cancel queued message")
+                if message.submission == nil {
+                    // The engine doesn't have it yet (an extension may be keeping it busy).
+                    Label("Sending…", systemImage: "clock").font(.caption2).foregroundStyle(.secondary)
+                } else {
+                    Label(message.delivery == .steer ? "Steering: after the current step" : "Queued: after this run",
+                          systemImage: message.delivery == .steer ? "arrow.turn.down.right" : "text.badge.plus")
+                        .font(.caption2)
+                        .foregroundStyle(.secondary)
+                    Button("Cancel", action: withdraw)
+                        .font(.caption2)
+                        .accessibilityLabel("Cancel queued message")
+                }
             }
         }
         .padding(.leading, 48)
@@ -1481,6 +1489,60 @@ private struct WorkingIndicator: View {
         }
         .font(.footnote.bold())
         .accessibilityLabel(label ?? "Working")
+    }
+}
+
+/// Extensions working for the user in a session, as Claude Code shows its background tasks: one shows as itself
+/// ("flights: /flights · 0:12"); several as their count, which opens to a row each, with how long it's run and a Stop.
+private struct ExtensionTasksIndicator: View {
+    let tasks: [AppModel.ExtensionTask]
+    let stop: (AppModel.ExtensionTask) -> Void
+    @State private var expanded = false
+
+    var body: some View {
+        if tasks.count == 1, let task = tasks.first {
+            HStack(spacing: 6) {
+                WorkingIndicator(label: "\(task.extensionName): \(task.what)")
+                Elapsed(since: task.startedAt)
+            }
+        } else {
+            VStack(alignment: .leading, spacing: 8) {
+                Button { withAnimation(.snappy) { expanded.toggle() } } label: {
+                    HStack(spacing: 6) {
+                        WorkingIndicator(label: "\(tasks.count) extension tasks running")
+                        Image(systemName: "chevron.right").font(.caption2.bold()).foregroundStyle(.secondary)
+                            .rotationEffect(.degrees(expanded ? 90 : 0))
+                    }
+                }
+                .buttonStyle(.plain)
+                if expanded {
+                    ForEach(tasks) { task in
+                        HStack(spacing: 8) {
+                            Text("\(task.extensionName): \(task.what)").font(.footnote)
+                            Elapsed(since: task.startedAt)
+                            Spacer()
+                            Button("Stop") { stop(task) }
+                                .font(.footnote)
+                                .tint(.red)
+                                .accessibilityLabel("Stop \(task.extensionName): \(task.what)")
+                        }
+                        .padding(.leading, 22)
+                    }
+                }
+            }
+        }
+    }
+
+    /// How long a task has run, ticking ("0:12").
+    private struct Elapsed: View {
+        let since: Date
+
+        var body: some View {
+            TimelineView(.periodic(from: .now, by: 1)) { context in
+                let seconds = max(0, Int(context.date.timeIntervalSince(since)))
+                Text(String(format: "%d:%02d", seconds / 60, seconds % 60)).font(.footnote.monospacedDigit()).foregroundStyle(.tertiary)
+            }
+        }
     }
 }
 
@@ -2342,6 +2404,9 @@ private struct EngineHostView: UIViewRepresentable {
         let container = UIView(frame: CGRect(x: 0, y: 0, width: 1, height: 1))
         container.isUserInteractionEnabled = false
         container.alpha = 0.01
+        // Not something to read or reach (VoiceOver, UI tests): and reading it waits for the engine's page, which an
+        // extension holding the engine keeps from answering.
+        container.accessibilityElementsHidden = true
         engine.webView.frame = container.bounds
         container.addSubview(engine.webView)
         return container

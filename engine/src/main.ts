@@ -773,9 +773,14 @@ async function forkSession(id: number, entryId: number): Promise<(SessionMeta & 
 }
 
 onCommand("session.abort", async ({ id }: { id: number }) => {
+	// Extensions' commands, and their reading of a message, stop too: Stop ends whatever the session is doing.
+	requireEngine().extensions.stopForUser(id);
 	await (await requireConversation(id)).abort(context);
 	return null;
 });
+
+/** Stops one of an extension's tasks in the session (the indicator's list), leaving the run and the others. */
+onCommand("session.stopTask", ({ id, task }: { id: number; task: number }) => ({ stopped: requireEngine().extensions.stopForUser(id, task) }));
 
 onCommand("session.setModel", async ({ id, provider, modelId }: { id: number; provider: string; modelId: string }) => {
 	await setSessionModel(id, provider, modelId);

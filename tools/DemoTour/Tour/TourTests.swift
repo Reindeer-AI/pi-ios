@@ -1493,6 +1493,70 @@ final class TourTests: XCTestCase {
         pause(1)
     }
 
+    /// Stop ends an extension's work for the user, and the indicator names the extension: SHARED_FILE is busytest.piext
+    /// (Fixtures/busytest.ts). A slow command shows as "busytest: /busywait", a message sent meanwhile shows at once, and
+    /// Stop ends the command (it hears the abort). Two at once show as "2 extension tasks running", which opens to a row
+    /// each with its own Stop. One that ignores Stop still frees the session at once. (/busyblock, holding the engine
+    /// itself, is for trying by hand: a UI test can't act meanwhile, as reading the app waits for the engine's page.)
+    func testExtensionStop() throws {
+        executionTimeAllowance = 6 * 60
+        let path = try XCTUnwrap(ProcessInfo.processInfo.environment["SHARED_FILE"], "the test extension's .piext")
+        pi.launchArguments += ["-openSharedFile", path]
+        launchReady()
+        tap(pi.buttons["Add to Every Session"].firstMatch)
+        pause(2)
+        if pi.buttons["Done"].exists { pi.buttons["Done"].firstMatch.tap() }
+        tap(pi.buttons["New session"].firstMatch)
+        pause(1.5)
+        let message = pi.textFields["Message pi"]
+        let stop = pi.buttons["Stop"].firstMatch
+        func command(_ text: String) {
+            tap(message)
+            message.typeText(text)
+            tap(pi.buttons["Send"].firstMatch)
+        }
+        func notice(_ prefix: String) -> XCUIElement {
+            pi.staticTexts.matching(NSPredicate(format: "label BEGINSWITH %@", prefix)).firstMatch
+        }
+
+        command("/busywait")
+        let working = pi.staticTexts["busytest: /busywait"]
+        XCTAssertTrue(working.waitForExistence(timeout: 5), "the indicator names the extension and its command")
+        let field = pi.textFields.firstMatch
+        tap(field)
+        field.typeText("Reply with exactly the word yes.")
+        tap(pi.buttons["Steer"].firstMatch)
+        let sent = pi.staticTexts["Reply with exactly the word yes."]
+        XCTAssertTrue(sent.waitForExistence(timeout: 3), "a message sent while the extension works shows at once")
+        tap(stop)
+        XCTAssertTrue(notice("busywait: stopped").waitForExistence(timeout: 5), "the command heard Stop")
+        XCTAssertFalse(working.exists, "the indicator gone")
+        pause(5)
+
+        command("/busyignore")
+        let ignoring = pi.staticTexts["busytest: /busyignore"]
+        XCTAssertTrue(ignoring.waitForExistence(timeout: 5), "working")
+        // A second task beside it: the indicator counts them and opens to a row each, each with its own Stop.
+        tap(field)
+        field.typeText("/busywait")
+        tap(pi.buttons["Steer"].firstMatch)
+        let two = pi.buttons.matching(NSPredicate(format: "label BEGINSWITH %@", "2 extension tasks running")).firstMatch
+        XCTAssertTrue(two.waitForExistence(timeout: 5), "two tasks, counted")
+        tap(two)
+        tap(pi.buttons["Stop busytest: /busywait"].firstMatch)
+        XCTAssertTrue(notice("busywait: stopped").waitForExistence(timeout: 5), "that one stopped")
+        XCTAssertTrue(ignoring.waitForExistence(timeout: 5), "the other still running, alone")
+        tap(stop)
+        let freed = Date().addingTimeInterval(5)
+        while (ignoring.exists || stop.exists) && Date() < freed { pause(0.3) }
+        XCTAssertFalse(ignoring.exists, "the session freed though the command ignores Stop")
+        XCTAssertFalse(stop.exists, "nothing to stop any more")
+        pause(2)
+
+        let end = Date().addingTimeInterval(60)
+        while stop.exists && Date() < end { pause(1) }
+    }
+
     /// Send now (the Steer button's menu) stops the run mid-tool and sends at once: a 30-second sleep ends within seconds,
     /// the message queued before it goes with it (one prompt, in order), nothing stays queued, no error shows, and the
     /// model answers the new prompt. Needs a model that runs tools.

@@ -43,6 +43,8 @@ final class AppModel {
         var items: [TranscriptItem] = []
         /// Messages sent during a run that the agent hasn't taken yet, shown after the transcript until it does.
         var queued: [QueuedMessage] = []
+        /// Extensions working for the user in this session (their commands, say), which Stop ends.
+        var extensionTasks: [ExtensionTask] = []
         var draft: DraftMessage?
         var tools: [ToolRun] = []
         var running = false
@@ -93,12 +95,22 @@ final class AppModel {
         let date = Date()
     }
 
-    /// A message sent during a run, waiting: a steer for the run's next step, a follow-up for its end.
+    /// A message sent during a run, waiting: a steer for the run's next step, a follow-up for its end. It shows from the
+    /// moment it's sent, before the engine has it (an extension may be keeping the engine busy).
     struct QueuedMessage: Identifiable, Equatable {
-        /// Its submission.
-        let id: Int
-        let text: String
+        let id = UUID()
+        /// Its submission, once the engine has it; until then it's sending.
+        var submission: Int?
+        var text: String
         let delivery: Delivery
+    }
+
+    /// What an extension is doing in a session for the user: a command, or reading a message before it's sent.
+    struct ExtensionTask: Identifiable, Equatable {
+        let id: Int
+        let extensionName: String
+        let what: String
+        let startedAt: Date
     }
 
     struct EditorText: Equatable {
@@ -1208,14 +1220,41 @@ final class AppModel {
         sessions[index].error = nil
         log("prompt", "[\(id)] \(text)")
         if sessions[index].model.provider == "ondevice" { try await loadLocalModel(sessions[index].model.modelId) }
+        // During a run, or while an extension works for the user, the message shows at once, as sending: the engine
+        // may not answer for a while.
+        var pending: UUID?
+        if sessions[index].running || !sessions[index].extensionTasks.isEmpty {
+            let message = QueuedMessage(text: text, delivery: delivery)
+            sessions[index].queued.append(message)
+            pending = message.id
+        }
         sessions[index].running = true
         updateBackground()
         var params: [String: Any] = ["id": id, "text": text, "whenBusy": delivery.rawValue]
         if let requestID { params["requestId"] = requestID.uuidString }
-        let result = try await engine.command("session.prompt", params) as? [String: Any]
-        // Waiting for the run: shown as queued until it's in the transcript (or dropped).
-        if result?["queued"] as? Bool == true, let submission = result?["submissionId"] as? Int, let index = self.index(of: id) {
-            sessions[index].queued.append(QueuedMessage(id: submission, text: result?["text"] as? String ?? text, delivery: delivery))
+        let result: [String: Any]?
+        do {
+            result = try await engine.command("session.prompt", params) as? [String: Any]
+        } catch {
+            if let pending, let index = self.index(of: id) { sessions[index].queued.removeAll { $0.id == pending } }
+            throw error
+        }
+        // Waiting for the run: queued until it's in the transcript (or dropped). Not waiting (the run had ended, or an
+        // extension took it), the sending one goes: the transcript shows it, if anything.
+        let queuedNow = result?["queued"] as? Bool == true
+        if let index = self.index(of: id) {
+            let at = pending.flatMap { pending in sessions[index].queued.firstIndex { $0.id == pending } }
+            if queuedNow, let submission = result?["submissionId"] as? Int {
+                let shown = result?["text"] as? String ?? text
+                if let at {
+                    sessions[index].queued[at].submission = submission
+                    sessions[index].queued[at].text = shown
+                } else if pending == nil {
+                    sessions[index].queued.append(QueuedMessage(submission: submission, text: shown, delivery: delivery))
+                }
+            } else if let at {
+                sessions[index].queued.remove(at: at)
+            }
         }
         // A `!command`, an extension's `/command`, or a prompt an extension took (pi's `input` event): no run starts.
         if result?["submissionId"] is NSNull, let index = self.index(of: id) {
@@ -1230,10 +1269,11 @@ final class AppModel {
 
     /// Takes back a queued message, whose text goes back to the message box; too late (the agent took it), it stays.
     func withdraw(_ message: QueuedMessage, in id: Int) async {
-        let result = try? await engine.command("session.withdraw", ["submissionId": message.id]) as? [String: Any]
+        guard let submission = message.submission else { return }
+        let result = try? await engine.command("session.withdraw", ["submissionId": submission]) as? [String: Any]
         guard let index = index(of: id) else { return }
         if result?["result"] as? String == "aborted" {
-            withdrawnSubmissions.insert(message.id)
+            withdrawnSubmissions.insert(submission)
             sessions[index].queued.removeAll { $0.id == message.id }
             sessions[index].editorText = EditorText(text: message.text, append: true)
         } else {
@@ -1246,12 +1286,12 @@ final class AppModel {
 
     /// Drops the queued messages that are in the transcript now, or were dropped (a run stopped), as the engine says.
     private func refreshQueued(_ id: Int) async {
-        guard let index = index(of: id), !sessions[index].queued.isEmpty else { return }
-        let ids = sessions[index].queued.map(\.id)
-        guard let result = try? await engine.command("session.queued", ["ids": ids]) as? [String: Any],
+        guard let index = index(of: id) else { return }
+        let ids = sessions[index].queued.compactMap(\.submission)
+        guard !ids.isEmpty, let result = try? await engine.command("session.queued", ["ids": ids]) as? [String: Any],
               let waiting = result["queued"] as? [Int], let index = self.index(of: id)
         else { return }
-        sessions[index].queued.removeAll { !waiting.contains($0.id) }
+        sessions[index].queued.removeAll { message in message.submission.map { !waiting.contains($0) } ?? false }
     }
 
     func submitFromWatch(_ text: String, sessionID: Int, requestID: UUID) async throws -> Int? {
@@ -1344,8 +1384,30 @@ final class AppModel {
         return list.compactMap(session(from:)).sorted { $0.lastActive > $1.lastActive }.map { ($0.id, $0.title, $0.lastActive) }
     }
 
+    /// Stops whatever the session is doing: its run, or an extension working for the user (whose questions on screen go
+    /// too). An extension holding the engine itself (code that never yields) keeps it from answering: then it says so.
     func abort(_ id: Int) {
-        Task { _ = try? await engine.command("session.abort", ["id": id]) }
+        for dialog in dialogs where dialog.sessionId == id { respond(to: dialog, with: nil) }
+        Task {
+            let stopping = Task { _ = try? await engine.command("session.abort", ["id": id]) }
+            let answered = await withTaskGroup(of: Bool.self) { group in
+                group.addTask { await stopping.value; return true }
+                group.addTask { try? await Task.sleep(for: .seconds(4)); return false }
+                let first = await group.next() ?? false
+                group.cancelAll()
+                return first
+            }
+            guard !answered, let index = index(of: id) else { return }
+            let holder = sessions[index].extensionTasks.first?.extensionName ?? "An extension"
+            log("engine", "[\(id)] Stop unanswered for 4 s: \(holder) holds the engine")
+            sessions[index].notice = Notice(extensionName: holder, message: "\(holder) is keeping pi's engine busy: Stop takes effect once it lets go.", level: "warning")
+        }
+    }
+
+    /// Stops one of an extension's tasks in the session (the indicator's list), leaving the run and the others.
+    func stopTask(_ task: ExtensionTask, in id: Int) {
+        log("prompt", "[\(id)] stopping \(task.extensionName): \(task.what)")
+        Task { _ = try? await engine.command("session.stopTask", ["id": id, "task": task.id]) }
     }
 
     /// Stops the run, whatever it's doing (a tool, writing, thinking), and sends `text` at once as the next prompt, after
@@ -1353,7 +1415,7 @@ final class AppModel {
     func sendNow(_ text: String, to id: Int) async {
         guard let index = index(of: id) else { return }
         let queued = sessions[index].queued
-        for message in queued { withdrawnSubmissions.insert(message.id) }
+        for message in queued { if let submission = message.submission { withdrawnSubmissions.insert(submission) } }
         sessions[index].queued.removeAll()
         // The stopped run's settling is no error: the user stopped it.
         stoppedForSendNow.insert(id)
@@ -1724,8 +1786,8 @@ final class AppModel {
             let submission = record["id"] as? Int
             var wasQueued = false
             if let index = index(of: id), let submission {
-                wasQueued = sessions[index].queued.contains { $0.id == submission } || withdrawnSubmissions.remove(submission) != nil
-                sessions[index].queued.removeAll { $0.id == submission }
+                wasQueued = sessions[index].queued.contains { $0.submission == submission } || withdrawnSubmissions.remove(submission) != nil
+                sessions[index].queued.removeAll { $0.submission == submission }
             }
             // The run Send now stopped settles unanswered: no error over the new run.
             let stoppedOnPurpose = status == "unanswered" && id.map { stoppedForSendNow.remove($0) != nil } == true
@@ -1741,6 +1803,13 @@ final class AppModel {
             if let id, autorunSessions.contains(id), let index = index(of: id) {
                 if case .assistant(_, let text, _, _, _) = sessions[index].items.last { log("answer", "[\(id)] \(text)") }
                 if localModel.model != nil { log("local-model", "after run: \(localModel.memoryReport())") }
+            }
+        case "extension_tasks":
+            guard let index = index(of: event["sessionId"] as? Int) else { return }
+            sessions[index].extensionTasks = (event["tasks"] as? [[String: Any]] ?? []).compactMap { task in
+                guard let id = task["id"] as? Int else { return nil }
+                return ExtensionTask(id: id, extensionName: task["extension"] as? String ?? "An extension", what: task["what"] as? String ?? "working",
+                                     startedAt: Date(timeIntervalSince1970: (task["startedAt"] as? Double ?? 0) / 1000))
             }
         case "ui_request":
             guard let sessionId = event["sessionId"] as? Int, let id = event["id"] as? String else { return }

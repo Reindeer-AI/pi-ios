@@ -27,7 +27,7 @@ import {
 	type Registry,
 	type Tx,
 } from "@earendil-works/pi-durable";
-import { request } from "../bridge.ts";
+import { emit, request } from "../bridge.ts";
 import { NativeExecutionEnv } from "../env.ts";
 import { type Adapted, adapt, type CheckDefinition, type Host, hostModules, type Prompt, startRequest, type UserBash } from "./adapter.ts";
 import { type AppDefinition, type AppHandle, appKey, closeApp as endApp, listApps } from "./apps.ts";
@@ -988,10 +988,67 @@ export class Extensions {
 		await this.host.histories.refresh(sessionId);
 		let prompt: Prompt = { text, handled: false, messages: [], systemPrompt: this.host.histories.systemPrompt(sessionId) };
 		for (const loaded of await this.selected(sessionId, context)) {
-			prompt = await loaded.adapted.prompt(sessionId, prompt);
+			const before: Prompt = prompt;
+			// Stopped while an extension reads the message: it isn't sent.
+			prompt = await this.forUser(sessionId, loaded.record.name, "reading your message", () => loaded.adapted.prompt(sessionId, before), {
+				...before,
+				handled: true,
+			});
 			if (prompt.handled) break;
 		}
 		return prompt;
+	}
+
+	/** What extensions are doing in each session for the user (commands, reading a message before it's sent), by task id. */
+	private forUserTasks = new Map<number, Map<number, { extension: string; what: string; startedAt: number; shown: boolean; controller: AbortController }>>();
+	private nextTask = 1;
+
+	/**
+	 * Runs an extension's handler as one of the session's tasks for the user, which Stop ends (`stopForUser`): the handler
+	 * gets the abort signal, and the session stops waiting for it even when it ignores the signal (`stopped` is then the
+	 * result). The app hears the session's tasks (`extension_tasks`) once a task takes a moment, so quick ones don't flash.
+	 */
+	private async forUser<T>(sessionId: number, extension: string, what: string, run: (signal: AbortSignal) => Promise<T>, stopped: T): Promise<T> {
+		const controller = new AbortController();
+		const id = this.nextTask++;
+		const tasks = this.forUserTasks.get(sessionId) ?? new Map();
+		this.forUserTasks.set(sessionId, tasks);
+		const task = { extension, what, startedAt: Date.now(), shown: false, controller };
+		tasks.set(id, task);
+		const show = setTimeout(() => {
+			task.shown = true;
+			this.announceTasks(sessionId);
+		}, 300);
+		const aborted = new Promise<"stopped">((resolve) => controller.signal.addEventListener("abort", () => resolve("stopped"), { once: true }));
+		try {
+			const result = await Promise.race([run(controller.signal), aborted]);
+			return result === "stopped" && controller.signal.aborted ? stopped : (result as T);
+		} finally {
+			clearTimeout(show);
+			tasks.delete(id);
+			if (tasks.size === 0) this.forUserTasks.delete(sessionId);
+			if (task.shown) this.announceTasks(sessionId);
+		}
+	}
+
+	/** The session's tasks for the user that have taken a moment, for the app's indicator. */
+	private announceTasks(sessionId: number): void {
+		const tasks = [...(this.forUserTasks.get(sessionId)?.entries() ?? [])]
+			.filter(([, task]) => task.shown)
+			.map(([id, task]) => ({ id, extension: task.extension, what: task.what, startedAt: task.startedAt }));
+		emit({ type: "extension_tasks", sessionId, tasks });
+	}
+
+	/** Stop: ends the session's tasks for the user (or the one `taskId` names); how many it ended. */
+	stopForUser(sessionId: number, taskId?: number): number {
+		let stopped = 0;
+		for (const [id, task] of this.forUserTasks.get(sessionId) ?? []) {
+			if (taskId !== undefined && id !== taskId) continue;
+			console.warn(`[${task.extension}] stopped by the user: ${task.what}`);
+			task.controller.abort(new Error("Stopped by the user"));
+			stopped++;
+		}
+		return stopped;
 	}
 
 	/** A `!command` the user runs: the first extension that runs or answers it (`user_bash`). */
@@ -1037,7 +1094,8 @@ export class Extensions {
 		const match = /^\/(\S+)\s*([\s\S]*)$/.exec(text.trim());
 		if (!match) return false;
 		const command = (await this.resolvedCommands(sessionId, context)).find(({ invocation }) => invocation === match[1]);
-		return command ? command.loaded.adapted.runCommand(sessionId, command.name, match[2]!) : false;
+		if (!command) return false;
+		return this.forUser(sessionId, command.loaded.record.name, `/${command.invocation}`, (signal) => command.loaded.adapted.runCommand(sessionId, command.name, match[2]!, signal), true);
 	}
 
 	/** The session's commands in load order, named as pi names them: a name two extensions register becomes `name:1`, `name:2`, …. */
