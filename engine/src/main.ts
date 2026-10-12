@@ -1082,7 +1082,32 @@ function catalogTraits(models: MutableModels, customIds: Set<string>): (id: stri
 			});
 		}
 	}
-	return (id) => traits.get(id) ?? traits.get(id.slice(id.indexOf("/") + 1)) ?? { input: ["text"], reasoning: false };
+	// A model newer than the catalog (claude-haiku-5-5 before pi-ai lists it) takes after its family: the name without its
+	// version parts (claude-haiku), as the catalog's models of that family do.
+	const families = new Map<string, { input: Model<"openai-completions">["input"]; reasoning: boolean }>();
+	for (const [id, trait] of traits) {
+		const family = familyOf(id);
+		const known = families.get(family);
+		families.set(family, {
+			input: !known || trait.input.includes("image") ? [...trait.input] : known.input,
+			reasoning: (known?.reasoning ?? false) || trait.reasoning,
+		});
+	}
+	return (id) => {
+		const bare = id.slice(id.indexOf("/") + 1);
+		// A family of one word ("mini") says too little to go by.
+		const family = familyOf(bare);
+		return traits.get(id) ?? traits.get(bare) ?? (family.includes("-") ? families.get(family) : undefined) ?? { input: ["text"], reasoning: false };
+	};
+}
+
+/** A model's family: its name without the parts that carry a version (claude-haiku-5-5 and claude-haiku-latest: claude-haiku). */
+function familyOf(id: string): string {
+	return id
+		.toLowerCase()
+		.split(/[-_.:]/)
+		.filter((part) => part && !/\d/.test(part) && part !== "latest" && part !== "preview")
+		.join("-");
 }
 
 function setCustomProvider(models: MutableModels, customIds: Set<string>, config: CustomProvider): void {
