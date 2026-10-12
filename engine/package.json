@@ -8,11 +8,11 @@
     "test": "esbuild src/sessions.ts --bundle --platform=node --format=esm --packages=external --outfile=dist/session-tests.mjs && node --test test/sessions.mjs"
   },
   "dependencies": {
-    "@earendil-works/chord": "1.0.2",
-    "@earendil-works/pi-ai": "1.0.2",
-    "@earendil-works/pi-coding-agent": "1.0.2",
-    "@earendil-works/pi-durable": "1.0.2",
-    "@earendil-works/pi-tui": "1.0.3",
+    "@earendil-works/chord": "1.1.0",
+    "@earendil-works/pi-ai": "1.1.0",
+    "@earendil-works/pi-coding-agent": "1.1.0",
+    "@earendil-works/pi-durable": "1.1.0",
+    "@earendil-works/pi-tui": "1.1.0",
     "@noble/hashes": "1.8.0",
     "buffer": "6.0.3",
     "es-module-lexer": "3.0.3",

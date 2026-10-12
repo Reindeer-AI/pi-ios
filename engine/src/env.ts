@@ -1,17 +1,23 @@
 import type { Context } from "@earendil-works/chord";
 import {
+	type BinaryReader,
+	type DirReader,
 	type ExecutionEnv,
 	ExecutionError,
 	err,
 	FileError,
 	type FileErrorCode,
 	type FileInfo,
+	type FileWatcher,
+	type LineScan,
 	ok,
 	type Result,
 	type ShellExecOptions,
 	type ShellExecResult,
 	type TextLine,
 	type TextLineReader,
+	type WatchChange,
+	type WatchTarget,
 } from "@earendil-works/pi-durable/env";
 import { onCommand, request } from "./bridge.ts";
 
@@ -148,6 +154,84 @@ class NativeTextLineReader implements TextLineReader {
 	}
 }
 
+/** Positional reads from one opened regular file (the native `read`: offset and length), with its metadata as opened. */
+class NativeBinaryReader implements BinaryReader {
+	constructor(
+		private readonly path: string,
+		private readonly opened: FileInfo,
+	) {}
+
+	async info(context: Context): Promise<Result<FileInfo, FileError>> {
+		return aborted(context, this.path) ?? ok(this.opened);
+	}
+
+	async read(offset: number, length: number, context: Context): Promise<Result<Uint8Array, FileError>> {
+		const abort = aborted(context, this.path);
+		if (abort) return abort;
+		if (!Number.isSafeInteger(offset) || offset < 0 || !Number.isSafeInteger(length) || length < 0) {
+			return err(new FileError("invalid", "Offset and length must be non-negative safe integers", this.path));
+		}
+		if (length === 0) return ok(new Uint8Array(0));
+		const read = await fs<{ data: string; bytesRead: number }>("read", { path: this.path, offset, length }, this.path);
+		return read.ok ? ok(fromBase64(read.value.data).subarray(0, read.value.bytesRead)) : read;
+	}
+
+	/** Lines `[startLine, endLine)`, 0-based: line k starts after the k-th newline byte. */
+	async scanLines(options: { startLine: number; endLine?: number }, context: Context): Promise<Result<LineScan, FileError>> {
+		const abort = aborted(context, this.path);
+		if (abort) return abort;
+		const whole = await fs<string>("readBinary", { path: this.path }, this.path);
+		if (!whole.ok) return whole;
+		const bytes = fromBase64(whole.value);
+		const newlines: number[] = [];
+		for (let index = 0; index < bytes.length; index++) if (bytes[index] === 10) newlines.push(index);
+		const lineStart = (line: number) => (line === 0 ? 0 : newlines[line - 1]! + 1);
+		const lineEnd = (line: number) => (line < newlines.length ? newlines[line]! : bytes.length);
+		// Sizes as the decoded text has them (TextDecoder drops a byte-order mark at the start of the file).
+		const decodedBytes = (from: number, to: number) => new TextEncoder().encode(new TextDecoder().decode(bytes.subarray(from, to))).length;
+		const startLine = Math.max(0, Math.floor(options.startLine));
+		if (startLine > newlines.length) {
+			const end = bytes.length;
+			return ok({ newlines: newlines.length, start: end, end, firstLineEnd: end, lastLineStart: end, selectedBytes: 0, firstLineBytes: 0 });
+		}
+		const start = lineStart(startLine);
+		const lastLine = (options.endLine === undefined ? newlines.length + 1 : Math.min(Math.floor(options.endLine), newlines.length + 1)) - 1;
+		if (lastLine < startLine) {
+			return ok({ newlines: newlines.length, start, end: start, firstLineEnd: start, lastLineStart: start, selectedBytes: 0, firstLineBytes: 0 });
+		}
+		const end = lineEnd(lastLine);
+		const firstLineEnd = lineEnd(startLine);
+		return ok({
+			newlines: newlines.length,
+			start,
+			end,
+			firstLineEnd,
+			lastLineStart: lineStart(lastLine),
+			selectedBytes: decodedBytes(start, end),
+			firstLineBytes: decodedBytes(start, firstLineEnd),
+		});
+	}
+
+	async close(): Promise<void> {}
+}
+
+/** Pages of one directory listing. */
+class ListedDirReader implements DirReader {
+	private at = 0;
+
+	constructor(private readonly entries: FileInfo[]) {}
+
+	async next(maxEntries: number, context: Context): Promise<Result<{ entries: FileInfo[]; done: boolean }, FileError>> {
+		const abort = aborted(context);
+		if (abort) return abort;
+		const page = this.entries.slice(this.at, this.at + Math.max(0, Math.floor(maxEntries)));
+		this.at += page.length;
+		return ok({ entries: page, done: this.at >= this.entries.length });
+	}
+
+	async close(): Promise<void> {}
+}
+
 export class NativeExecutionEnv implements ExecutionEnv {
 	/** Every engine environment sees the app's one file namespace. */
 	readonly id = "ios:app";
@@ -274,6 +358,35 @@ export class NativeExecutionEnv implements ExecutionEnv {
 		return aborted(context, resolved) ?? (await fs<FileInfo[]>("readdir", { path: resolved }, resolved));
 	}
 
+	async openDirReader(path: string, context: Context): Promise<Result<DirReader, FileError>> {
+		const listed = await this.listDir(path, context);
+		return listed.ok ? ok(new ListedDirReader(listed.value)) : listed;
+	}
+
+	/** A regular file for positional reads: a symbolic link is followed, unless `noFollow` (then it's invalid). */
+	async openBinaryReader(path: string, options: { noFollow?: boolean } | undefined, context: Context): Promise<Result<BinaryReader, FileError>> {
+		const resolved = this.resolve(path);
+		let info = await this.fileInfo(resolved, context);
+		if (!info.ok) return info;
+		let target = resolved;
+		if (info.value.kind === "symlink") {
+			if (options?.noFollow) return err(new FileError("invalid", "Is a symbolic link", resolved));
+			const real = await this.canonicalPath(resolved, context);
+			if (!real.ok) return real;
+			target = real.value;
+			info = await this.fileInfo(target, context);
+			if (!info.ok) return info;
+		}
+		if (info.value.kind === "directory") return err(new FileError("is_directory", "Is a directory", resolved));
+		if (info.value.kind !== "file") return err(new FileError("invalid", "Not a regular file", resolved));
+		return ok(new NativeBinaryReader(target, info.value));
+	}
+
+	/** iOS gives apps no file-change notifications for this: hosts that ask go without watching. */
+	async watch(_targets: readonly WatchTarget[], _onChange: (change: WatchChange) => void, context: Context): Promise<Result<FileWatcher, FileError>> {
+		return aborted(context) ?? err(new FileError("not_supported", "Watching files isn't supported here"));
+	}
+
 	async canonicalPath(path: string, context: Context): Promise<Result<string, FileError>> {
 		const resolved = this.resolve(path);
 		return aborted(context, resolved) ?? (await fs<string>("realpath", { path: resolved }, resolved));
@@ -385,7 +498,8 @@ export class NativeExecutionEnv implements ExecutionEnv {
 		const emit = (text: string) => {
 			if (settled || text === "" || options?.onOutput === undefined || callbackError !== undefined) return;
 			try {
-				options.onOutput(text, context);
+				// The shell's output arrives as one stream (stderr with stdout).
+				options.onOutput(text, context, { stream: "stdout" });
 			} catch (error) {
 				callbackError = new ExecutionError("callback_error", String(error));
 				kill();
