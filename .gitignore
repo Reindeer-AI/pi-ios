@@ -48,5 +48,7 @@ __pycache__/
 
 PiWatchLink/.build/
 
-# build-ipa.sh --no-watch builds from this copy of the project (removed afterwards)
-App/PiMobile-no-watch.xcodeproj/
+# build-ipa.sh --no-watch and --no-widgets build from this copy of the project (removed afterwards)
+App/PiMobile-trimmed.xcodeproj/
+
+PiWidgetLayout/.build/

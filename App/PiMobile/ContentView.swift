@@ -1,5 +1,6 @@
 import PhotosUI
 import PiEngineKit
+import PiWidgetLayout
 import SafariServices
 import SwiftUI
 
@@ -24,12 +25,14 @@ struct RootView: View {
         return app.panels.contains { $0.sessionId == id && $0.app != nil && $0.visible }
     }
 
-    /// The panel in the sheet: on a wide screen apps show beside their session instead (`AppColumn`).
+    /// The panel in the sheet: on a wide screen apps show beside their session instead (`AppColumn`). While an app from
+    /// a widget is open, its window shows dialogs and panels (`FocusedAppView`).
     private var sheetPanel: AppModel.Panel? {
-        app.panels.first { $0.placement == "sheet" && $0.visible && !(sizeClass == .regular && $0.app != nil) }
+        guard app.focusedApp == nil else { return nil }
+        return app.panels.first { $0.placement == "sheet" && $0.visible && !(sizeClass == .regular && $0.app != nil) }
     }
 
-    private var hasExtensionSheet: Bool { !app.dialogs.isEmpty || sheetPanel != nil }
+    private var hasExtensionSheet: Bool { app.focusedApp == nil && (!app.dialogs.isEmpty || sheetPanel != nil) }
 
     var body: some View {
         Group {
@@ -109,8 +112,16 @@ struct RootView: View {
                 }
             }
         }
-        // A shared extension (a .piext file from AirDrop, Messages, Files…): asks before adding it.
-        .onOpenURL { app.openShared($0) }
+        // A widget's tap opens its app full screen; a shared extension (a .piext file from AirDrop, Messages, Files…)
+        // asks before adding it.
+        .onOpenURL { url in
+            if WidgetLayout.parse(url) != nil { app.openWidget(url) } else { app.openShared(url) }
+        }
+        // The app from a widget, in its own window over everything here.
+        .onChange(of: app.focusedApp?.id) {
+            if app.focusedApp != nil { showingSettings = false }
+            FocusWindow.shared.update(app)
+        }
         .sheet(item: $app.sharedExtension) { offer in SharedExtensionSheet(app: app, offer: offer) }
         .sheet(item: $app.sharedSession) { offer in SharedSessionSheet(app: app, offer: offer) }
         // `-openSession ID` (automated runs): opens that session.
@@ -371,10 +382,12 @@ private struct SessionView: View {
     private var dock: [AppModel.DockApp] { app.apps[id]?.running ?? [] }
     /// On a wide screen, the session's app on screen shows in a column beside it, or expanded across the screen.
     private var columnApp: AppModel.Panel? {
-        sizeClass == .regular ? app.panels.first { $0.sessionId == id && $0.app != nil && $0.visible && !$0.expanded } : nil
+        sizeClass == .regular && app.focusedApp == nil
+            ? app.panels.first { $0.sessionId == id && $0.app != nil && $0.visible && !$0.expanded } : nil
     }
     private var expandedApp: AppModel.Panel? {
-        sizeClass == .regular ? app.panels.first { $0.sessionId == id && $0.app != nil && $0.visible && $0.expanded } : nil
+        sizeClass == .regular && app.focusedApp == nil
+            ? app.panels.first { $0.sessionId == id && $0.app != nil && $0.visible && $0.expanded } : nil
     }
 
     var body: some View {
@@ -896,7 +909,7 @@ private struct NoticeBanner: View {
 }
 
 /// A dialog an extension shows: pick an option, confirm, or enter text.
-private struct ExtensionDialogView: View {
+struct ExtensionDialogView: View {
     let dialog: AppModel.ExtensionDialog
     let sessionTitle: String?
     let answer: (String?) -> Void

@@ -31,6 +31,7 @@ import { emit, request } from "../bridge.ts";
 import { NativeExecutionEnv } from "../env.ts";
 import { type Adapted, adapt, type CheckDefinition, type Host, hostModules, type Prompt, startRequest, type UserBash } from "./adapter.ts";
 import { type AppDefinition, type AppHandle, appKey, closeApp as endApp, listApps } from "./apps.ts";
+import { forgetApps, publishApps } from "./widgets.ts";
 import { installDependencies, installPackage } from "./npm.ts";
 import { codingAgentModule } from "./coding-agent.ts";
 import { forgetSkills } from "../skills.ts";
@@ -246,6 +247,8 @@ export class Extensions {
 		this.loaded.set(name, loaded);
 		if (scope === "default") this.updateDefaults();
 		forgetSkills();
+		// The widget lists its apps (one that failed to load keeps what it listed last).
+		publishApps(name, adapted.offeredApps);
 		void previous?.adapted.shutdown("reload");
 		return loaded;
 	}
@@ -861,12 +864,20 @@ export class Extensions {
 		return listApps(sessionId, await this.offeredApps(sessionId, context));
 	}
 
-	/** Opens a session's app by key (extension/name), or shows it, running; `visible: false` puts it in the dock. */
-	async openApp(sessionId: number, key: string, options: { visible?: boolean }, context: Context): Promise<AppHandle> {
+	/** Opens a session's app by key (extension/name), or shows it, running; `visible: false` puts it in the dock.
+	 * `target`: a widget's tap area opened it, for the app's `onWidgetOpen`. */
+	async openApp(sessionId: number, key: string, options: { visible?: boolean; target?: string }, context: Context): Promise<AppHandle> {
 		const offer = (await this.offeredApps(sessionId, context)).find((each) => appKey(each.extension, each.definition.name) === key);
 		if (!offer) throw new Error(`No app ${key} in this session`);
-		const app = await offer.loaded.adapted.openApp(sessionId, offer.definition.name, options);
+		const app = await offer.loaded.adapted.openApp(sessionId, offer.definition.name, { visible: options.visible });
 		if (!app) throw new Error(`No app ${key} in this session`);
+		if (options.target !== undefined && offer.definition.onWidgetOpen) {
+			try {
+				await offer.definition.onWidgetOpen(options.target, app);
+			} catch (error) {
+				console.warn(`${key}: onWidgetOpen: ${message(error)}`);
+			}
+		}
 		return app;
 	}
 
@@ -964,6 +975,7 @@ export class Extensions {
 			delete (await tx.doc(DefaultExtensionsDoc, root.id)).extensions[name];
 		}, context);
 		this.unload(Extensions.registryName("default", name));
+		forgetApps(Extensions.registryName("default", name));
 	}
 
 	/** Removes a session's own extension. */
@@ -975,6 +987,7 @@ export class Extensions {
 			await this.select(tx, sessionId);
 		}, context);
 		this.unload(Extensions.registryName("session", name, sessionId));
+		forgetApps(Extensions.registryName("session", name, sessionId));
 	}
 
 	/** Makes a session's extension a default for every session (a workspace path is copied), and takes it out of the
@@ -995,8 +1008,10 @@ export class Extensions {
 	/** Forgets a deleted session's extensions, and its instances of the defaults. */
 	forget(sessionId: number): void {
 		for (const [name, loaded] of [...this.loaded]) {
-			if (name.startsWith(`session:${sessionId}:`)) this.unload(name);
-			else if (name.startsWith("default:")) void loaded.adapted.shutdown("quit", sessionId);
+			if (name.startsWith(`session:${sessionId}:`)) {
+				this.unload(name);
+				forgetApps(name);
+			} else if (name.startsWith("default:")) void loaded.adapted.shutdown("quit", sessionId);
 		}
 		this.host.histories.forget(sessionId);
 	}
@@ -1257,6 +1272,7 @@ export const EXTENSIONS_GUIDE = `You can extend yourself with pi extensions (pi-
 - pi.registerCommand adds a /command the user runs from the message box. ctx.ui dialogs (select, confirm, input, editor), notify, setStatus, setWidget, setFooter, setEditorText, and ctx.ui.custom show in the app; pi-tui components (SelectList, Input, Editor, Text, Markdown, Loader, Container, …) become native views you tap, other components show their rendered lines with a key bar. On iOS there is also ctx.ui.panel({ html, title, placement: "sheet" | "widget", onMessage }) for an HTML page (in it, pi.post(data), pi.onMessage(callback), pi.close(result)); it returns { post, update, close, closed }. Everything @earendil-works/pi-coding-agent exports can be imported; its CLI parts (SessionManager, SettingsManager, createAgentSession, built-in tool factories) throw.
 - Stopping (required): the user can stop anything an extension does for them (Stop, Send now), and every extension must honor it: ignoring the signal is not allowed. A command's handler gets ctx.signal, a tool's execute gets signal (its third argument), and a background check's run gets { signal }. Pass it on to everything that waits (fetch(url, { signal }), pi.exec(command, args, { signal }), child_process), clear timers and end loops when it aborts (signal.addEventListener(\"abort\", ...), if (signal.aborted) return), and stop promptly, saying so if it matters (ctx.ui.notify). Never block the engine: no long synchronous loops or busy waits, as pi's engine runs everything in one thread and nothing else (not even Stop) runs while such code does; break long work into awaited steps. An extension that ignores Stop is cut off anyway and keeps running unseen, which the user sees as a broken extension.
 - Apps (iOS): for a page the user keeps using, not a one-off sheet, register an app: pi.registerApp({ name, title, icon (an SF Symbol name, e.g. "airplane"), description, render: (app) => html, onMessage: (data, app) => …, onOpen/onMinimize/onRestore/onClose?, shared?: true for one app in every session }). It opens in a sheet; closing the sheet minimizes it to the session's dock above the message box, with its page still running, and only Close ends it. Its record and saved state outlive relaunches: render(app) draws the page from app.state when it opens again. Open it with pi.apps.open(name, { visible?: false }) (from a command, a tool, or an event); pi.apps.get(name) finds it running. The handle: app.post(data) to the page, app.setState(json), app.state, app.setBadge("3") on its dock entry, app.setTitle, app.refresh() (render again), app.show(), app.minimize(), app.close(), app.closed, app.ui (the session's ctx.ui). In the page: pi.post(data), pi.onMessage(callback), pi.state.get()/set(json)/onChange(callback) (saved with the app), pi.minimize(), pi.close(). Keep what the page shows in app.state or the extension's own storage, so a page drawn again after a relaunch looks the same. You can list and open the session's apps yourself (apps_list, app_open, app_close). ctx.ui.panel({ …, persistent: true, icon }) is a quick app that minimizes the same way but ends with the engine.
+- Home Screen widgets (iOS): the user can put any app on the Home Screen as a widget (the app's menu → Add to Home Screen…, or Edit → Add Widget → pi app); tapping it opens the app full screen. The extension draws it with native views, described as JSON: await pi.widget.update({ app?: its app's name (needed only with several apps), layout: node (every size), small?/medium?/large?/extraLarge?/circular?/rectangular?/inline?: node for that size (circular, rectangular and inline are the Lock Screen's), background?: fill, margins?: false (reach the edges; you then pad yourself), timeline?: [{ at: Date, layout, … }] (later looks, shown on time without pi running) }); pi.widget.clear(app?). iOS shows a snapshot: update it whenever what it shows changes (from a command, the app's onMessage, a tool, or a background check), not on a timer; no code runs in the widget, though a date node with style "relative" or "timer" stays live. Nodes: { type: "vstack" | "hstack" | "zstack", children, spacing?, alignment? ("leading", "top", "topLeading", …) }; { type: "text", text, font? ("largeTitle", "title", "title2", "title3", "headline", "subheadline", "body", "callout", "footnote", "caption", "caption2"), size?, weight? ("medium", "semibold", "bold", …), design? ("rounded", "monospaced", "serif"), lineLimit?, minScale?, align?, markdown?, monospacedDigit?, uppercase? }; { type: "date", date, style: "time" | "date" | "relative" | "timer" | "offset" }; { type: "symbol", name (an SF Symbol), size?, mode? ("hierarchical", "palette" with colors, "multicolor") }; { type: "image", src (a data: or https: URL; pi stores it small), fit? ("fill" | "fit") }; { type: "gauge", value, min?, max?, label?, valueLabel?, style? ("circular", "linear", "circularCapacity", "linearCapacity") }; { type: "progress", value, total? }; { type: "chart", kind: "line" | "bar" | "area", values: numbers, min?, max? }; { type: "spacer", min? }; { type: "divider" }. Any node also takes color, padding (a number or { horizontal, vertical, top, … }), frame ({ width, height, maxWidth: "infinity", maxHeight, alignment }), background (a fill), cornerRadius, border ({ color, width }), opacity, accent: true (tinted Home Screens color it), and open: "target" (on medium and larger widgets, tapping it opens the app and calls its registerApp onWidgetOpen(target, app)); text properties on a stack apply to what it holds. Colors: "primary", "secondary", "accent", "red", "orange", "yellow", "green", "mint", "teal", "cyan", "blue", "indigo", "purple", "pink", "brown", "gray", "white", "black", "#RRGGBB(AA)", or { light, dark }; a fill is a color or { gradient: "linear" | "radial", colors, from?, to? }. Sizes are about 170×170 points (small), 364×170 (medium) and 364×382 (large): keep it glanceable, a few lines of large type. Without a widget of its own, an app's widget shows its icon and title.
 - Synced storage (iOS): pi.synced keeps an extension's small JSON values (128 KB in all) on all the user's devices, through iCloud Keychain: pi.synced.get(key), .set(key, value), .delete(key), .keys(); synchronous. Devices merge it key by key, so keep each record under its own key ("entry:<id>") rather than one list. Changes from another device arrive when pi next starts. Prefer it over a file for settings and records the user expects on every device; secrets go to pi.secrets, sensitive numbers to pi.vault.
 - Background checks and notifications (iOS): pi.registerCheck({ name, description, every: minutes (15 at least), run: async ({ signal }) => short text }) runs when iOS wakes pi (as often as iOS decides: often every 15 to 60 minutes, not after the user swipes pi away or in Low Power Mode), for a few seconds, without a session or the model, and only for an extension added for every session. It suits polling an API and remembering what it saw (pi.synced); await pi.notify({ title, body, session?, prompt? }) tells the user (asked the first time, like the camera); tapping it opens session (a session's id, or "new"; from a session, that one by default), and with prompt that session gets the message (a new session when there's none, as from a background check), so the agent picks up from there. The user sees each check and its last result in Settings → Extensions.
 - Device (iOS): await pi.location() (also ctx.location) gives { latitude, longitude, accuracy, altitude?, timestamp }; an app's page has the same pi.location() and navigator.mediaDevices.getUserMedia for the camera and microphone (or <input type="file" accept="image/*" capture> for one photo). The user is asked the first time each extension wants one and can change it in Settings; a denial rejects (handle it). The engine itself has no camera or microphone: use them from an app's page.

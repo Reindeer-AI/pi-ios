@@ -5,5 +5,10 @@
 	<!-- On-device models: a 3-4 GB GGUF needs more than the default per-app memory limit. -->
 	<key>com.apple.developer.kernel.increased-memory-limit</key>
 	<true/>
+	<!-- Home Screen widgets: pi saves what extensions draw where its widget extension (PiWidgets) reads it. -->
+	<key>com.apple.security.application-groups</key>
+	<array>
+		<string>$(PI_APP_GROUP)</string>
+	</array>
 </dict>
 </plist>

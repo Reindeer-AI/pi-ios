@@ -1,3 +1,4 @@
+import PiWidgetLayout
 import SwiftUI
 
 /// An extension's panel in a sheet: its page or component, with a Close button (closing tells the extension, as
@@ -129,6 +130,7 @@ struct AppSheet: View {
     /// Back to the sessions list, the app still open (`AppModel.showSessions`).
     let sessions: () -> Void
     @State private var detent: PresentationDetent = .large
+    @State private var addingToHomeScreen = false
 
     var body: some View {
         NavigationStack {
@@ -153,6 +155,7 @@ struct AppSheet: View {
                 ToolbarItemGroup(placement: .topBarTrailing) {
                     Button("Minimize", systemImage: "chevron.down", action: minimize)
                     Menu {
+                        Button("Add to Home Screen…", systemImage: "plus.square.on.square") { addingToHomeScreen = true }
                         Button("Close App", systemImage: "xmark", role: .destructive, action: close)
                     } label: {
                         Image(systemName: "ellipsis.circle")
@@ -162,6 +165,9 @@ struct AppSheet: View {
             }
         }
         .presentationDetents([.medium, .large], selection: $detent)
+        .sheet(isPresented: $addingToHomeScreen) {
+            AddToHomeScreenSheet(title: title, icon: panel.app?.icon, widgetApp: HomeScreenWidgets.app(for: panel))
+        }
     }
 }
 
@@ -176,6 +182,7 @@ struct AppColumn: View {
     var setExpanded: (Bool) -> Void = { _ in }
     /// Expanded: back to the sessions list, the app beside its session again.
     var sessions: (() -> Void)?
+    @State private var addingToHomeScreen = false
 
     var body: some View {
         VStack(spacing: 0) {
@@ -191,6 +198,7 @@ struct AppColumn: View {
                 }
                 .labelStyle(.iconOnly)
                 Menu {
+                    Button("Add to Home Screen…", systemImage: "plus.square.on.square") { addingToHomeScreen = true }
                     Button("Close App", systemImage: "xmark", role: .destructive, action: close)
                 } label: {
                     Image(systemName: "ellipsis.circle")
@@ -206,6 +214,9 @@ struct AppColumn: View {
             }
         }
         .background(Color(.systemBackground))
+        .sheet(isPresented: $addingToHomeScreen) {
+            AddToHomeScreenSheet(title: title, icon: panel.app?.icon, widgetApp: HomeScreenWidgets.app(for: panel))
+        }
     }
 }
 

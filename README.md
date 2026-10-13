@@ -57,9 +57,10 @@ dash), CPython ([BeeWare's Python-Apple-support](https://github.com/beeware/Pyth
 durable store, the network, the Keychain, and a llama.cpp server for on-device models (`Vendor/`).
 
 ```
-App/            the iOS app (SwiftUI): sessions, settings, the browser, apps, the vault
+App/            the iOS app (SwiftUI): sessions, settings, the browser, apps, the vault; its Watch app and widgets
 PiEngineKit/    native services the engine calls: shell, files, SQLite, network proxy, Keychain, vault, MCP, GitHub
 engine/         the agent: pi's packages bundled for WebKit, with the app's tools, extension runtime and commands
+PiWidgetLayout/ the Home Screen widgets' layouts that extensions draw, their native renderer, and the files they share
 Vendor/         scripts that fetch or build the native components (a-Shell's commands, dash, CPython, llama.cpp)
 extensions/     example extensions (with apps): flights, personal details
 tools/          UI tests (DemoTour) and small test servers
@@ -84,7 +85,15 @@ open App/PiMobile.xcodeproj
 ```
 
 Run the PiMobile scheme on a simulator. For a device, choose your team in Signing & Capabilities and a bundle identifier
-of your own. A signed `.ipa`: `PI_TEAM=<your team id> scripts/build-ipa.sh` (see the script for profiles).
+of your own (the widgets share the App Group `group.<bundle identifier>` with the app). A signed `.ipa`:
+`PI_TEAM=<your team id> scripts/build-ipa.sh` (see the script for profiles; `--no-widgets` leaves the widgets and the
+App Group out).
+
+## Home Screen widgets
+
+Any extension app can go on the Home Screen as a widget (the app's menu → Add to Home Screen…); tapping it opens just
+that app, full screen. The extension draws the widget with native views it describes as JSON (`pi.widget.update`, in
+`engine/src/extensions/widgets.ts`); `PiWidgets` shows what pi saved, as a snapshot, and no extension code runs in it.
 
 ## Apple Watch
 

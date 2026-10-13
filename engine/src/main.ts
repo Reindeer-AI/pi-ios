@@ -739,9 +739,9 @@ onCommand("extensions.import", ({ shared }: { shared: SharedExtension }) => {
 /** A session's dock (the apps it runs) and launcher (the apps its extensions offer). */
 onCommand("apps.list", ({ sessionId }: { sessionId: number }) => requireEngine().extensions.apps(sessionId, context));
 
-/** Opens a session's app from its dock or the launcher, or shows it again. */
-onCommand("apps.open", async ({ sessionId, key }: { sessionId: number; key: string }) => {
-	await requireEngine().extensions.openApp(sessionId, key, { visible: true }, context);
+/** Opens a session's app from its dock, the launcher, or a widget (with its tap area's target), or shows it again. */
+onCommand("apps.open", async ({ sessionId, key, target }: { sessionId: number; key: string; target?: string }) => {
+	await requireEngine().extensions.openApp(sessionId, key, { visible: true, ...(typeof target === "string" ? { target } : {}) }, context);
 	return null;
 });
 

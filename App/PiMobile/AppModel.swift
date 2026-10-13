@@ -280,6 +280,8 @@ final class AppModel {
     var sheetPanel: Panel? { panels.first { $0.placement == "sheet" && $0.visible } }
     /// Each session's apps, once its screen asked for them.
     var apps: [Int: SessionApps] = [:]
+    /// An app a Home Screen widget opened, full screen (`HomeScreenWidgets.swift`).
+    var focusedApp: FocusedApp?
     /// A shared extension the user opened in pi, waiting for them to add it (`SharedExtension.swift`).
     var sharedExtension: SharedExtensionOffer?
     /// A shared session file opened in pi, waiting for the user's answer.
@@ -387,6 +389,7 @@ final class AppModel {
         for install in [images.install, sqlite.install, files.install, shell.install, keychain.install, loopback.install, browser.install, crabbox.install, github.install, extensionSecrets.install, mcp.install, extensionKeys.install] {
             install(engine)
         }
+        HomeScreenWidgets.install(engine)
         engine.useVault(vault)
         browser.vault = vault
         crabbox.github = github

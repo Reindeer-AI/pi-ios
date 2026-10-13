@@ -3,12 +3,17 @@
 #
 #   PI_TEAM=<team id> scripts/build-ipa.sh                   → dist/PiMobile-<version>.ipa, ad hoc
 #   PI_TEAM=<team id> scripts/build-ipa.sh --development     → signed with the team's development certificate and profile
-#   PI_TEAM=<team id> scripts/build-ipa.sh --profile FILE --watch-profile FILE → signed with a profile downloaded from developer.apple.com
+#   PI_TEAM=<team id> scripts/build-ipa.sh --profile FILE --watch-profile FILE --widgets-profile FILE
+#                                                             → signed with profiles downloaded from developer.apple.com
 #                                                               (development, ad hoc, App Store, or enterprise, told apart
-#                                                               by its contents)
+#                                                               by their contents): the app's, the Watch app's, and the
+#                                                               widgets' (the app's and the widgets' with pi's App Group)
 #   PI_TEAM=<team id> scripts/build-ipa.sh --safari-identity → the browser identifies as Safari (some sites, Google's
 #                                                               sign-in among them, refuse other browsers)
-#   PI_TEAM=<team id> scripts/build-ipa.sh --no-watch        → without the Watch app (then --profile alone signs it)
+#   PI_TEAM=<team id> scripts/build-ipa.sh --no-watch        → without the Watch app (no --watch-profile)
+#   PI_TEAM=<team id> scripts/build-ipa.sh --no-widgets      → without the Home Screen widgets, and the App Group they
+#                                                               share with the app (no --widgets-profile; the app's
+#                                                               profile needs no App Group)
 #
 # PI_TEAM is the Apple developer team that signs it; PI_VERSION its version (default 0.1.<commit count>; an MDM needs
 # it higher on every upload), PI_BUILD its build number (default PI_VERSION; App Store Connect needs it higher on every
@@ -29,14 +34,18 @@ METHOD=release-testing
 PROFILE=""
 WATCH_PROFILE=""
 WATCH=1
+WIDGETS_PROFILE=""
+WIDGETS=1
 while [[ $# -gt 0 ]]; do
 	case "$1" in
 		--development) METHOD=debugging ;;
 		--watch-profile) WATCH_PROFILE="${2:?--watch-profile needs a .mobileprovision file}"; shift ;;
+		--widgets-profile) WIDGETS_PROFILE="${2:?--widgets-profile needs a .mobileprovision file}"; shift ;;
 		--profile) PROFILE="${2:?--profile needs a .mobileprovision file}"; shift ;;
 		--safari-identity) CONDITIONS='$(inherited) SAFARI_IDENTITY' ;;
 		--no-watch) WATCH="" ;;
-		*) echo "usage: $0 [--development | --profile FILE (--watch-profile FILE | --no-watch)] [--safari-identity]" >&2; exit 2 ;;
+		--no-widgets) WIDGETS="" ;;
+		*) echo "usage: $0 [--development | --profile FILE (--watch-profile FILE | --no-watch) (--widgets-profile FILE | --no-widgets)] [--safari-identity]" >&2; exit 2 ;;
 	esac
 	shift
 done
@@ -47,6 +56,16 @@ if [[ -n "$WATCH" ]] && [[ -n "$PROFILE" && -z "$WATCH_PROFILE" || -z "$PROFILE"
 	echo "error: manual signing requires both --profile and --watch-profile (the embedded Watch app has its own bundle ID), or --no-watch" >&2
 	exit 2
 fi
+if [[ -n "$WIDGETS" ]] && [[ -n "$PROFILE" && -z "$WIDGETS_PROFILE" || -z "$PROFILE" && -n "$WIDGETS_PROFILE" ]]; then
+	echo "error: manual signing requires both --profile and --widgets-profile (the widgets have their own bundle ID), or --no-widgets" >&2
+	exit 2
+fi
+# The App Group the app shares with its widgets (PI_APP_GROUP in the project).
+APP_GROUP="group.$BUNDLE_ID"
+# A profile must grant the App Group for the widgets: its App ID has App Groups on, with this group, before it's made.
+grants_group() {
+	plutil -extract "Entitlements.com\.apple\.security\.application-groups" json -o - - <<<"$1" 2>/dev/null | grep -q "\"$APP_GROUP\""
+}
 SIGNING=()
 UPDATES=(-allowProvisioningUpdates)
 if [[ -n "$PROFILE" ]]; then
@@ -77,6 +96,19 @@ if [[ -n "$PROFILE" ]]; then
 		cp "$WATCH_PROFILE" "$PROFILES_DIR/$WATCH_PROFILE_UUID.mobileprovision"
 		SIGNING+=(PI_WATCH_PROVISIONING_PROFILE="$WATCH_PROFILE_NAME")
 	fi
+	if [[ -n "$WIDGETS" ]]; then
+		WIDGETS_DECODED="$(security cms -D -i "$WIDGETS_PROFILE")"
+		WIDGETS_PROFILE_NAME="$(plutil -extract Name raw -o - - <<<"$WIDGETS_DECODED")"
+		WIDGETS_PROFILE_UUID="$(plutil -extract UUID raw -o - - <<<"$WIDGETS_DECODED")"
+		for each in "$PROFILE_NAME:$DECODED" "$WIDGETS_PROFILE_NAME:$WIDGETS_DECODED"; do
+			if ! grants_group "${each#*:}"; then
+				echo "error: the profile \"${each%%:*}\" doesn't grant the App Group $APP_GROUP (turn on App Groups with it for its App ID, then make the profile again), or build --no-widgets" >&2
+				exit 1
+			fi
+		done
+		cp "$WIDGETS_PROFILE" "$PROFILES_DIR/$WIDGETS_PROFILE_UUID.mobileprovision"
+		SIGNING+=(PI_WIDGETS_PROVISIONING_PROFILE="$WIDGETS_PROFILE_NAME")
+	fi
 	UPDATES=()
 	echo "Signing with \"$PROFILE_NAME\" ($METHOD, $IDENTITY)"
 fi
@@ -95,31 +127,48 @@ done
 rm -rf "$BUILD"
 mkdir -p "$BUILD" "$DIST"
 
-# Without the Watch app: archived from a copy of the project whose app target neither depends on the Watch app nor
-# embeds it (Xcode can't leave a dependency out by a setting, and checks any app it embeds is signed like the app).
+# Without the Watch app or the widgets: archived from a copy of the project whose app target neither depends on them
+# nor embeds them (Xcode can't leave a dependency out by a setting, and checks anything it embeds is signed like the
+# app); without the widgets, the app is signed without their App Group too.
 PROJECT="$ROOT/App/PiMobile.xcodeproj"
-if [[ -z "$WATCH" ]]; then
-	PROJECT="$ROOT/App/PiMobile-no-watch.xcodeproj"
+if [[ -z "$WATCH" || -z "$WIDGETS" ]]; then
+	PROJECT="$ROOT/App/PiMobile-trimmed.xcodeproj"
 	rm -rf "$PROJECT"
 	cp -R "$ROOT/App/PiMobile.xcodeproj" "$PROJECT"
-	trap 'rm -rf "$ROOT/App/PiMobile-no-watch.xcodeproj"' EXIT
-	python3 - "$PROJECT/project.pbxproj" <<'UNHOOK'
+	trap 'rm -rf "$ROOT/App/PiMobile-trimmed.xcodeproj"' EXIT
+	if [[ -z "$WIDGETS" ]]; then
+		cp "$ROOT/App/PiMobile.entitlements" "$ROOT/App/build/PiMobile-no-widgets.entitlements"
+		plutil -remove "com\.apple\.security\.application-groups" "$ROOT/App/build/PiMobile-no-widgets.entitlements"
+	fi
+	python3 - "$PROJECT/project.pbxproj" "$WATCH" "$WIDGETS" <<'UNHOOK'
 import re
 import sys
 
-path = sys.argv[1]
+path, watch, widgets = sys.argv[1:4]
 text = open(path).read()
-# The Watch app's target, the dependency on it, and the phase that embeds it, found by name.
-target = re.search(r"^\t+(\w+) /\* PiWatch \*/ = \{\s*isa = PBXNativeTarget;", text, re.M)
-phase = re.search(r"^\t+(\w+) /\* Embed Watch Content \*/ = \{isa = PBXCopyFilesBuildPhase;", text, re.M)
-dependency = target and re.search(r"^\t+(\w+) = \{isa = PBXTargetDependency; target = " + target.group(1) + ";", text, re.M)
-if not (target and phase and dependency):
-    sys.exit("error: --no-watch can't find the Watch app's target, its dependency, or its embed phase in the project")
-before = len(text)
-text = re.sub(r"^\t+" + phase.group(1) + r" /\* Embed Watch Content \*/,\n", "", text, flags=re.M)
-text = re.sub(r"^\t+" + dependency.group(1) + r",\n", "", text, flags=re.M)
-if len(text) == before:
-    sys.exit("error: --no-watch removed nothing from the app target")
+
+def unhook(name, embed, flag):
+    """Takes a target's dependency and embed phase out of the app target, found by name."""
+    global text
+    target = re.search(r"^\t+(\w+) /\* " + name + r" \*/ = \{\s*isa = PBXNativeTarget;", text, re.M)
+    phase = re.search(r"^\t+(\w+) /\* " + embed + r" \*/ = \{isa = PBXCopyFilesBuildPhase;", text, re.M)
+    dependency = target and re.search(r"^\t+(\w+) = \{isa = PBXTargetDependency; target = " + target.group(1) + ";", text, re.M)
+    if not (target and phase and dependency):
+        sys.exit(f"error: {flag} can't find {name}'s target, its dependency, or its embed phase in the project")
+    before = len(text)
+    text = re.sub(r"^\t+" + phase.group(1) + r" /\* " + embed + r" \*/,\n", "", text, flags=re.M)
+    text = re.sub(r"^\t+" + dependency.group(1) + r",\n", "", text, flags=re.M)
+    if len(text) == before:
+        sys.exit(f"error: {flag} removed nothing from the app target")
+
+if not watch:
+    unhook("PiWatch", "Embed Watch Content", "--no-watch")
+if not widgets:
+    unhook("PiWidgets", "Embed Widgets", "--no-widgets")
+    entitlements = "CODE_SIGN_ENTITLEMENTS = PiMobile.entitlements;"
+    if text.count(entitlements) != 2:
+        sys.exit("error: --no-widgets can't find the app's entitlements in the project")
+    text = text.replace(entitlements, 'CODE_SIGN_ENTITLEMENTS = "build/PiMobile-no-widgets.entitlements";')
 open(path, "w").write(text)
 UNHOOK
 fi
@@ -131,8 +180,17 @@ xcodebuild archive \
 	DEVELOPMENT_TEAM="$TEAM" MARKETING_VERSION="$VERSION" CURRENT_PROJECT_VERSION="$BUILD_NUMBER" \
 	PI_BUNDLE_ID="$BUNDLE_ID" \
 	SWIFT_ACTIVE_COMPILATION_CONDITIONS="$CONDITIONS" ${SIGNING[@]+"${SIGNING[@]}"}
-if [[ -z "$WATCH" && -d "$BUILD/PiMobile.xcarchive/Products/Applications/PiMobile.app/Watch" ]]; then
+ARCHIVED="$BUILD/PiMobile.xcarchive/Products/Applications/PiMobile.app"
+if [[ -z "$WATCH" && -d "$ARCHIVED/Watch" ]]; then
 	echo "error: --no-watch, yet the archived app has a Watch app" >&2
+	exit 1
+fi
+if [[ -z "$WIDGETS" && -d "$ARCHIVED/PlugIns/PiWidgets.appex" ]]; then
+	echo "error: --no-widgets, yet the archived app has widgets" >&2
+	exit 1
+fi
+if [[ -n "$WIDGETS" && ! -d "$ARCHIVED/PlugIns/PiWidgets.appex" ]]; then
+	echo "error: the archived app has no widgets (PlugIns/PiWidgets.appex)" >&2
 	exit 1
 fi
 
@@ -158,6 +216,11 @@ $(if [[ -n "$WATCH" ]]; then cat <<WATCH_ENTRY
 		<key>$BUNDLE_ID.watchkitapp</key>
 		<string>$WATCH_PROFILE_NAME</string>
 WATCH_ENTRY
+fi)
+$(if [[ -n "$WIDGETS" ]]; then cat <<WIDGETS_ENTRY
+		<key>$BUNDLE_ID.widgets</key>
+		<string>$WIDGETS_PROFILE_NAME</string>
+WIDGETS_ENTRY
 fi)
 	</dict>
 SIGNING

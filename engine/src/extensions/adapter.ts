@@ -73,6 +73,7 @@ import type { NodeContext } from "./node.ts";
 import { CONTEXT_EDIT_ENTRY, CUSTOM_ENTRY, CUSTOM_MESSAGE_ENTRY, type Histories, messageOf, type SessionEntry } from "./session.ts";
 import { getKeybindings } from "@earendil-works/pi-tui";
 import { type AppDefinition, type AppHandle, appKey, openApp, releaseApps, runningApp } from "./apps.ts";
+import { widgetApi } from "./widgets.ts";
 import { htmlPanel } from "./panels.ts";
 import { componentTheme } from "./components.ts";
 import { piTuiModule, showComponent } from "./tui.ts";
@@ -138,7 +139,7 @@ export interface Adapted {
 	/** The apps this extension registered in a session (`pi.registerApp`). */
 	apps(conversationId: number): Promise<AppDefinition[]>;
 	/** The apps it registers, as its first instance did (for sharing it). */
-	readonly offeredApps: { name: string; title: string; icon: string | null }[];
+	readonly offeredApps: { name: string; title: string; icon: string | null; description: string | null }[];
 	/** Opens one of them in the session (or shows it, running); undefined when it has no such app. */
 	openApp(conversationId: number, name: string, options?: { visible?: boolean }): Promise<AppHandle | undefined>;
 	/** `session_shutdown` for one conversation's instance, or every instance, which are then dropped. */
@@ -369,8 +370,13 @@ class PiExtension implements Adapted {
 		return [...this.template.checks.values()];
 	}
 
-	get offeredApps(): { name: string; title: string; icon: string | null }[] {
-		return [...this.template.apps.values()].map((app) => ({ name: app.name, title: app.title ?? app.name, icon: app.icon ?? null }));
+	get offeredApps(): { name: string; title: string; icon: string | null; description: string | null }[] {
+		return [...this.template.apps.values()].map((app) => ({
+			name: app.name,
+			title: app.title ?? app.name,
+			icon: app.icon ?? null,
+			description: app.description ?? null,
+		}));
 	}
 
 	get notes(): string[] {
@@ -560,6 +566,8 @@ class PiExtension implements Adapted {
 			notify: notifyApi(extensionOf(this.name), conversationId),
 			// iOS: the user's MCP servers, each once the user allows this extension (mcp.ts).
 			mcp: mcpApi(extensionOf(this.name)),
+			// iOS: its apps' Home Screen widgets (widgets.ts).
+			widget: widgetApi(this.name, () => [...this.appNames]),
 			events: eventBus(conversationId),
 			getActiveTools: () => [...instance.tools.keys()],
 			getAllTools: () => [...instance.tools.values()].map((tool) => ({ name: tool.name, description: tool.description })),

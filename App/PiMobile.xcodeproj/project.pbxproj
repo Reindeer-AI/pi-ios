@@ -13,12 +13,16 @@
 		A20000000000000000000001 = {isa = PBXBuildFile; productRef = A20000000000000000000002; };
 		A20000000000000000000003 = {isa = PBXBuildFile; productRef = A20000000000000000000004; };
 		A20000000000000000000005 = {isa = PBXBuildFile; fileRef = A20000000000000000000006; settings = {ATTRIBUTES = (RemoveHeadersOnCopy, ); }; };
+		A30000000000000000000001 = {isa = PBXBuildFile; fileRef = A30000000000000000000002; settings = {ATTRIBUTES = (RemoveHeadersOnCopy, ); }; };
+		A30000000000000000000005 /* PiWidgetLayout in Frameworks */ = {isa = PBXBuildFile; productRef = A30000000000000000000006; };
+		A30000000000000000000008 /* PiWidgetLayout in Frameworks */ = {isa = PBXBuildFile; productRef = A30000000000000000000009; };
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
 		A10000000000000000000004 /* PiMobile.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = PiMobile.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		A10000000000000000000014 /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; path = Info.plist; sourceTree = "<group>"; };
 		A20000000000000000000006 /* PiWatch.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = PiWatch.app; sourceTree = BUILT_PRODUCTS_DIR; };
+		A30000000000000000000002 /* PiWidgets.appex */ = {isa = PBXFileReference; explicitFileType = "wrapper.app-extension"; includeInIndex = 0; path = PiWidgets.appex; sourceTree = BUILT_PRODUCTS_DIR; };
 /* End PBXFileReference section */
 
 /* Begin PBXFileSystemSynchronizedRootGroup section */
@@ -28,6 +32,7 @@
 			sourceTree = "<group>";
 		};
 		A20000000000000000000007 /* PiWatch */ = {isa = PBXFileSystemSynchronizedRootGroup; path = PiWatch; sourceTree = "<group>"; };
+		A30000000000000000000003 /* PiWidgets */ = {isa = PBXFileSystemSynchronizedRootGroup; path = PiWidgets; sourceTree = "<group>"; };
 /* End PBXFileSystemSynchronizedRootGroup section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -39,20 +44,25 @@
 				A20000000000000000000001 /* PiWatchLink */,
 				A10000000000000000000015 /* ios_system in Frameworks */,
 				A10000000000000000000019 /* LlamaServerSupport in Frameworks */,
+				A30000000000000000000008 /* PiWidgetLayout in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
 		A20000000000000000000008 = {isa = PBXFrameworksBuildPhase; buildActionMask = 2147483647; files = (A20000000000000000000003, ); runOnlyForDeploymentPostprocessing = 0; };
+		A30000000000000000000004 = {isa = PBXFrameworksBuildPhase; buildActionMask = 2147483647; files = (A30000000000000000000005, ); runOnlyForDeploymentPostprocessing = 0; };
 /* End PBXFrameworksBuildPhase section */
 
 /* Begin PBXCopyFilesBuildPhase section */
+		A3000000000000000000000A /* Embed Widgets */ = {isa = PBXCopyFilesBuildPhase; buildActionMask = 2147483647; dstPath = ""; dstSubfolderSpec = 13; files = (A30000000000000000000001, ); name = "Embed Widgets"; runOnlyForDeploymentPostprocessing = 0; };
 		A20000000000000000000009 /* Embed Watch Content */ = {isa = PBXCopyFilesBuildPhase; buildActionMask = 2147483647; dstPath = "$(CONTENTS_FOLDER_PATH)/Watch"; dstSubfolderSpec = 16; files = (A20000000000000000000005, ); name = "Embed Watch Content"; runOnlyForDeploymentPostprocessing = 0; };
 /* End PBXCopyFilesBuildPhase section */
 /* Begin PBXContainerItemProxy section */
 		A20000000000000000000012 = {isa = PBXContainerItemProxy; containerPortal = A10000000000000000000001; proxyType = 1; remoteGlobalIDString = A2000000000000000000000B; remoteInfo = PiWatch; };
+		A3000000000000000000000F = {isa = PBXContainerItemProxy; containerPortal = A10000000000000000000001; proxyType = 1; remoteGlobalIDString = A3000000000000000000000B; remoteInfo = PiWidgets; };
 /* End PBXContainerItemProxy section */
 /* Begin PBXTargetDependency section */
 		A2000000000000000000000A = {isa = PBXTargetDependency; target = A2000000000000000000000B; targetProxy = A20000000000000000000012; };
+		A30000000000000000000010 = {isa = PBXTargetDependency; target = A3000000000000000000000B; targetProxy = A3000000000000000000000F; };
 /* End PBXTargetDependency section */
 
 /* Begin PBXGroup section */
@@ -62,6 +72,7 @@
 				A10000000000000000000014 /* Info.plist */,
 				A10000000000000000000005 /* PiMobile */,
 				A20000000000000000000007 /* PiWatch */,
+				A30000000000000000000003 /* PiWidgets */,
 				A10000000000000000000003 /* Products */,
 			);
 			sourceTree = "<group>";
@@ -71,6 +82,7 @@
 			children = (
 				A10000000000000000000004 /* PiMobile.app */,
 				A20000000000000000000006 /* PiWatch.app */,
+				A30000000000000000000002 /* PiWidgets.appex */,
 			);
 			name = Products;
 			sourceTree = "<group>";
@@ -88,11 +100,13 @@
 				A1000000000000000000000A /* Copy engine bundle */,
 				A10000000000000000000018 /* Embed a-Shell commands */,
 				A20000000000000000000009 /* Embed Watch Content */,
+				A3000000000000000000000A /* Embed Widgets */,
 			);
 			buildRules = (
 			);
 			dependencies = (
 				A2000000000000000000000A,
+				A30000000000000000000010,
 			);
 			fileSystemSynchronizedGroups = (
 				A10000000000000000000005 /* PiMobile */,
@@ -103,6 +117,7 @@
 				A10000000000000000000017 /* ios_system */,
 				A1000000000000000000001A /* LlamaServerSupport */,
 				A20000000000000000000002 /* PiWatchLink */,
+				A30000000000000000000009 /* PiWidgetLayout */,
 			);
 			productName = PiMobile;
 			productReference = A10000000000000000000004 /* PiMobile.app */;
@@ -120,6 +135,19 @@
 			productName = PiWatch;
 			productReference = A20000000000000000000006;
 			productType = "com.apple.product-type.application";
+		};
+		A3000000000000000000000B /* PiWidgets */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = A3000000000000000000000C;
+			buildPhases = (A3000000000000000000000D, A30000000000000000000004, A3000000000000000000000E, );
+			buildRules = ();
+			dependencies = ();
+			fileSystemSynchronizedGroups = (A30000000000000000000003, );
+			name = PiWidgets;
+			packageProductDependencies = (A30000000000000000000006, );
+			productName = PiWidgets;
+			productReference = A30000000000000000000002;
+			productType = "com.apple.product-type.app-extension";
 		};
 /* End PBXNativeTarget section */
 
@@ -149,6 +177,7 @@
 				A1000000000000000000000C /* XCLocalSwiftPackageReference "../PiEngineKit" */,
 				A10000000000000000000016 /* XCLocalSwiftPackageReference "../Vendor" */,
 				A2000000000000000000000F /* PiWatchLink */,
+				A30000000000000000000007 /* PiWidgetLayout */,
 			);
 			preferredProjectObjectVersion = 77;
 			productRefGroup = A10000000000000000000003 /* Products */;
@@ -157,6 +186,7 @@
 			targets = (
 				A10000000000000000000006 /* PiMobile */,
 				A2000000000000000000000B /* PiWatch */,
+				A3000000000000000000000B /* PiWidgets */,
 			);
 		};
 /* End PBXProject section */
@@ -170,6 +200,7 @@
 			runOnlyForDeploymentPostprocessing = 0;
 		};
 		A2000000000000000000000E = {isa = PBXResourcesBuildPhase; buildActionMask = 2147483647; files = (); runOnlyForDeploymentPostprocessing = 0; };
+		A3000000000000000000000E = {isa = PBXResourcesBuildPhase; buildActionMask = 2147483647; files = (); runOnlyForDeploymentPostprocessing = 0; };
 /* End PBXResourcesBuildPhase section */
 
 /* Begin PBXShellScriptBuildPhase section */
@@ -222,6 +253,7 @@
 			runOnlyForDeploymentPostprocessing = 0;
 		};
 		A2000000000000000000000D = {isa = PBXSourcesBuildPhase; buildActionMask = 2147483647; files = (); runOnlyForDeploymentPostprocessing = 0; };
+		A3000000000000000000000D = {isa = PBXSourcesBuildPhase; buildActionMask = 2147483647; files = (); runOnlyForDeploymentPostprocessing = 0; };
 /* End PBXSourcesBuildPhase section */
 
 /* Begin XCBuildConfiguration section */
@@ -237,6 +269,8 @@
 				GCC_OPTIMIZATION_LEVEL = 0;
 				IPHONEOS_DEPLOYMENT_TARGET = 26.0;
 				ONLY_ACTIVE_ARCH = YES;
+				// The App Group pi shares with its widget extension (PiMobile.entitlements, PiWidgets.entitlements).
+				PI_APP_GROUP = "group.$(PI_BUNDLE_ID:default=dev.pimobile.PiMobile)";
 				SDKROOT = iphoneos;
 				SWIFT_ACTIVE_COMPILATION_CONDITIONS = "DEBUG $(inherited)";
 				SWIFT_OPTIMIZATION_LEVEL = "-Onone";
@@ -252,6 +286,8 @@
 				ENABLE_STRICT_OBJC_MSGSEND = YES;
 				ENABLE_USER_SCRIPT_SANDBOXING = NO;
 				IPHONEOS_DEPLOYMENT_TARGET = 26.0;
+				// The App Group pi shares with its widget extension (PiMobile.entitlements, PiWidgets.entitlements).
+				PI_APP_GROUP = "group.$(PI_BUNDLE_ID:default=dev.pimobile.PiMobile)";
 				SDKROOT = iphoneos;
 				SWIFT_COMPILATION_MODE = wholemodule;
 				VALIDATE_PRODUCT = YES;
@@ -376,6 +412,60 @@
 			};
 			name = Release;
 		};
+		A30000000000000000000011 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
+				CODE_SIGN_ENTITLEMENTS = PiWidgets.entitlements;
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				ENABLE_DEBUG_DYLIB = NO;
+				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_FILE = PiWidgets.plist;
+				INFOPLIST_KEY_CFBundleDisplayName = pi;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+					"@executable_path/../../Frameworks",
+				);
+				MARKETING_VERSION = 0.1;
+				PRODUCT_BUNDLE_IDENTIFIER = "$(PI_BUNDLE_ID:default=dev.pimobile.PiMobile).widgets";
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				// scripts/build-ipa.sh --widgets-profile names the profile for this target.
+				PROVISIONING_PROFILE_SPECIFIER = "$(PI_WIDGETS_PROVISIONING_PROFILE)";
+				SKIP_INSTALL = YES;
+				SWIFT_VERSION = 6.0;
+				TARGETED_DEVICE_FAMILY = "1,2";
+			};
+			name = Debug;
+		};
+		A30000000000000000000012 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
+				CODE_SIGN_ENTITLEMENTS = PiWidgets.entitlements;
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				ENABLE_DEBUG_DYLIB = NO;
+				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_FILE = PiWidgets.plist;
+				INFOPLIST_KEY_CFBundleDisplayName = pi;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+					"@executable_path/../../Frameworks",
+				);
+				MARKETING_VERSION = 0.1;
+				PRODUCT_BUNDLE_IDENTIFIER = "$(PI_BUNDLE_ID:default=dev.pimobile.PiMobile).widgets";
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				// scripts/build-ipa.sh --widgets-profile names the profile for this target.
+				PROVISIONING_PROFILE_SPECIFIER = "$(PI_WIDGETS_PROVISIONING_PROFILE)";
+				SKIP_INSTALL = YES;
+				SWIFT_VERSION = 6.0;
+				TARGETED_DEVICE_FAMILY = "1,2";
+			};
+			name = Release;
+		};
 /* End XCBuildConfiguration section */
 
 /* Begin XCConfigurationList section */
@@ -398,6 +488,7 @@
 			defaultConfigurationName = Release;
 		};
 		A2000000000000000000000C = {isa = XCConfigurationList; buildConfigurations = (A20000000000000000000010, A20000000000000000000011, ); defaultConfigurationIsVisible = 0; defaultConfigurationName = Release; };
+		A3000000000000000000000C = {isa = XCConfigurationList; buildConfigurations = (A30000000000000000000011, A30000000000000000000012, ); defaultConfigurationIsVisible = 0; defaultConfigurationName = Release; };
 /* End XCConfigurationList section */
 
 /* Begin XCLocalSwiftPackageReference section */
@@ -410,6 +501,7 @@
 			relativePath = ../Vendor;
 		};
 		A2000000000000000000000F = {isa = XCLocalSwiftPackageReference; relativePath = ../PiWatchLink; };
+		A30000000000000000000007 = {isa = XCLocalSwiftPackageReference; relativePath = ../PiWidgetLayout; };
 /* End XCLocalSwiftPackageReference section */
 
 /* Begin XCSwiftPackageProductDependency section */
@@ -430,6 +522,8 @@
 		};
 		A20000000000000000000002 = {isa = XCSwiftPackageProductDependency; package = A2000000000000000000000F; productName = PiWatchLink; };
 		A20000000000000000000004 = {isa = XCSwiftPackageProductDependency; package = A2000000000000000000000F; productName = PiWatchLink; };
+		A30000000000000000000006 = {isa = XCSwiftPackageProductDependency; package = A30000000000000000000007; productName = PiWidgetLayout; };
+		A30000000000000000000009 = {isa = XCSwiftPackageProductDependency; package = A30000000000000000000007; productName = PiWidgetLayout; };
 /* End XCSwiftPackageProductDependency section */
 	};
 	rootObject = A10000000000000000000001 /* Project object */;

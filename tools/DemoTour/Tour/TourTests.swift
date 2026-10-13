@@ -2770,6 +2770,152 @@ final class TourTests: XCTestCase {
         pause(1)
     }
 
+    /// Home Screen widgets (pi.widget): SHARED_FILE is widgettest.piext (Fixtures/widgettest.ts). A layout pi refuses
+    /// reaches the extension as an error; its command draws the widget and opens its app, whose menu shows the widget as
+    /// it looks (Add to Home Screen…). On the Home Screen, the widget added from the gallery shows what the extension
+    /// drew, and a tap opens the app full screen; Back to pi goes to its session.
+    func testHomeScreenWidget() throws {
+        executionTimeAllowance = 10 * 60
+        let path = try XCTUnwrap(ProcessInfo.processInfo.environment["SHARED_FILE"], "the test extension's .piext")
+        pi.launchArguments += ["-openSharedFile", path]
+        launchReady()
+        tap(pi.buttons["Add to Every Session"].firstMatch)
+        pause(2)
+        if pi.buttons["Done"].exists { pi.buttons["Done"].firstMatch.tap() }
+        let message = pi.textFields["Message pi"]
+        func command(_ text: String) {
+            tap(message)
+            message.typeText(text)
+            tap(pi.buttons["Send"].firstMatch)
+        }
+        func notice(_ prefix: String) -> XCUIElement {
+            pi.staticTexts.matching(NSPredicate(format: "label BEGINSWITH %@", prefix)).firstMatch
+        }
+        func shot(_ name: String) {
+            let attachment = XCTAttachment(screenshot: XCUIScreen.main.screenshot())
+            attachment.name = name
+            attachment.lifetime = .keepAlways
+            add(attachment)
+        }
+        tap(pi.buttons["New session"].firstMatch)
+        pause(1.5)
+
+        command("/widgetbad")
+        let refused = notice("widget error")
+        XCTAssertTrue(refused.waitForExistence(timeout: 20), "the refusal reaches the extension")
+        print("refused: \(refused.label)")
+        XCTAssertTrue(refused.label.contains("unknown type \"txt\""), "named, with where it is")
+        pause(4)
+
+        command("/widgettest")
+        let drawn = notice("widget drawn")
+        XCTAssertTrue(drawn.waitForExistence(timeout: 20), "the extension drew its widget")
+        print("drawn: \(drawn.label)")
+        XCTAssertFalse(drawn.label.contains("not saved"), "pi saved it (in the App Group)")
+        // The app, in its sheet: its menu's Add to Home Screen… shows the widget as it looks.
+        tap(pi.buttons["App menu"].firstMatch)
+        tap(pi.buttons["Add to Home Screen…"].firstMatch)
+        let preview = pi.descendants(matching: .any)["widget-preview-medium"]
+        XCTAssertTrue(preview.waitForExistence(timeout: 10), "the widget's preview")
+        XCTAssertTrue(pi.staticTexts["TLV → LHR"].firstMatch.exists, "the preview shows what the extension drew")
+        pause(1)
+        shot("add-to-home-screen")
+        tap(pi.buttons["Done"].firstMatch)
+        pause(1.5)
+
+        // The Home Screen: the widget, added from the gallery.
+        let springboard = XCUIApplication(bundleIdentifier: "com.apple.springboard")
+        XCUIDevice.shared.press(.home)
+        pause(2)
+        // A widget an earlier run left.
+        removePiWidget(springboard)
+        addPiWidget(springboard)
+        shot("home-screen-widget")
+        let widget = springboard.descendants(matching: .any).matching(NSPredicate(format: "label CONTAINS %@", "TLV")).firstMatch
+        XCTAssertTrue(widget.waitForExistence(timeout: 20), "the widget shows what the extension drew")
+        print("widget: \(widget.label)")
+        widget.tap()
+
+        // pi, with only the app, full screen.
+        let back = pi.buttons["Back to pi"]
+        XCTAssertTrue(back.waitForExistence(timeout: 20), "the app full screen, with a way back")
+        XCTAssertTrue(pi.webViews.staticTexts["Flights board"].waitForExistence(timeout: 15), "its page")
+        pause(1.5)
+        print("page: \(pi.webViews.staticTexts.allElementsBoundByIndex.map(\.label))")
+        shot("app-full-screen")
+        back.tap()
+        XCTAssertTrue(message.waitForExistence(timeout: 10), "back in the app's session")
+        XCTAssertTrue(pi.buttons.matching(NSPredicate(format: "label BEGINSWITH %@", "Flights")).firstMatch.waitForExistence(timeout: 10),
+                      "the app in the session's dock")
+        pause(1)
+        shot("back-to-pi")
+
+        // From a cold start: pi launches into the app.
+        pi.terminate()
+        pause(2)
+        if !widget.waitForExistence(timeout: 10) {
+            shot("after-terminate")
+            print("SPRINGBOARD (after terminate):\n\(springboard.debugDescription)")
+        }
+        XCTAssertTrue(widget.exists, "the widget, still there")
+        widget.tap()
+        XCTAssertTrue(back.waitForExistence(timeout: 60), "pi launched into the app, full screen")
+        XCTAssertTrue(pi.webViews.staticTexts["target: LY315"].waitForExistence(timeout: 30), "its page, with the tap area's target")
+        pause(1.5)
+        shot("cold-start")
+        back.tap()
+        XCTAssertTrue(message.waitForExistence(timeout: 10), "back in the app's session")
+        removePiWidget(springboard)
+    }
+
+    /// Adds pi's widget to the Home Screen from the widget gallery (Edit → Add Widget → pi).
+    private func addPiWidget(_ springboard: XCUIApplication) {
+        func dump(_ what: String) { print("SPRINGBOARD (\(what)):\n\(springboard.debugDescription)") }
+        // Touch and hold an empty spot until the icons jiggle.
+        springboard.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.62)).press(forDuration: 2)
+        pause(1.5)
+        let edit = springboard.buttons["Edit"].firstMatch
+        guard edit.waitForExistence(timeout: 5) else { return dump("no Edit") }
+        edit.tap()
+        pause(1)
+        let add = springboard.buttons.matching(NSPredicate(format: "label CONTAINS %@", "Add Widget")).firstMatch
+        guard add.waitForExistence(timeout: 5) else { return dump("no Add Widget") }
+        add.tap()
+        pause(2)
+        let search = springboard.searchFields.firstMatch
+        guard search.waitForExistence(timeout: 5) else { return dump("no search") }
+        search.tap()
+        search.typeText("pi")
+        pause(2)
+        let result = springboard.cells.matching(NSPredicate(format: "label ==[c] %@ OR label BEGINSWITH[c] %@", "pi", "pi,")).firstMatch
+        guard result.waitForExistence(timeout: 5) else { return dump("no pi result") }
+        result.tap()
+        pause(2)
+        dump("pi's widgets")
+        let addWidget = springboard.buttons.matching(NSPredicate(format: "label CONTAINS %@", "Add Widget")).firstMatch
+        guard addWidget.waitForExistence(timeout: 5) else { return dump("no Add Widget button") }
+        addWidget.tap()
+        pause(2)
+        let done = springboard.buttons["Done"].firstMatch
+        if done.waitForExistence(timeout: 5) { done.tap() }
+        pause(2)
+    }
+
+    /// Takes the test's widget off the Home Screen again.
+    private func removePiWidget(_ springboard: XCUIApplication) {
+        XCUIDevice.shared.press(.home)
+        pause(2)
+        let widget = springboard.descendants(matching: .any).matching(NSPredicate(format: "label CONTAINS %@", "TLV")).firstMatch
+        guard widget.waitForExistence(timeout: 5) else { return }
+        widget.press(forDuration: 1.5)
+        let remove = springboard.buttons.matching(NSPredicate(format: "label CONTAINS %@", "Remove Widget")).firstMatch
+        guard remove.waitForExistence(timeout: 5) else { return print("SPRINGBOARD (no Remove Widget):\n\(springboard.debugDescription)") }
+        remove.tap()
+        let confirm = springboard.alerts.buttons["Remove"].firstMatch
+        if confirm.waitForExistence(timeout: 5) { confirm.tap() }
+        pause(1)
+    }
+
     /// From a session (pi may reopen on the last one shown) back to the sessions list.
     private func backToSessions() {
         pause(1.5)

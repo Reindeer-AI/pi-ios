@@ -38,6 +38,8 @@ export type AppDefinition = {
 	onMinimize?: (app: AppHandle) => unknown;
 	onRestore?: (app: AppHandle) => unknown;
 	onClose?: (app: AppHandle) => unknown;
+	/** A tap on its Home Screen widget's tap area (`open: target` in `pi.widget` layouts) opened it, with that target. */
+	onWidgetOpen?: (target: string, app: AppHandle) => unknown;
 };
 
 /** A running app, as its extension holds it. */
