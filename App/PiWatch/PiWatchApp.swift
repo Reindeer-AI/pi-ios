@@ -10,7 +10,17 @@ struct PiWatchApp: App {
     @Environment(\.scenePhase) private var scenePhase
 
     var body: some Scene {
-        WindowGroup { WatchHome(model: model) }
+        WindowGroup {
+            WatchHome(model: model)
+                // `-openSession ID` (screenshots, tests): that session, once the phone's sessions are in (their first
+                // arrival resets navigation).
+                .task {
+                    guard UserDefaults.standard.object(forKey: "openSession") != nil else { return }
+                    while model.snapshot == nil { try? await Task.sleep(for: .milliseconds(300)) }
+                    try? await Task.sleep(for: .milliseconds(500))
+                    model.requestedSession = UserDefaults.standard.integer(forKey: "openSession")
+                }
+        }
         .onChange(of: scenePhase) {
             if scenePhase == .active { model.refresh() }
             else { model.stopSpeaking() }
