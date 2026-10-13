@@ -63,8 +63,11 @@ fi
 # The App Group the app shares with its widgets (PI_APP_GROUP in the project).
 APP_GROUP="group.$BUNDLE_ID"
 # A profile must grant the App Group for the widgets: its App ID has App Groups on, with this group, before it's made.
+# Read with Python's plistlib: plutil's key paths (dots, escaped in a key) read differently across macOS versions.
 grants_group() {
-	plutil -extract "Entitlements.com\.apple\.security\.application-groups" json -o - - <<<"$1" 2>/dev/null | grep -q "\"$APP_GROUP\""
+	python3 -c 'import plistlib, sys
+entitlements = plistlib.loads(sys.stdin.buffer.read()).get("Entitlements", {})
+sys.exit(0 if sys.argv[1] in entitlements.get("com.apple.security.application-groups", []) else 1)' "$APP_GROUP" <<<"$1"
 }
 SIGNING=()
 UPDATES=(-allowProvisioningUpdates)
