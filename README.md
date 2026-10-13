@@ -89,13 +89,15 @@ of your own (the widgets share the App Group `group.<bundle identifier>` with th
 `PI_TEAM=<your team id> scripts/build-ipa.sh` (see the script for profiles; `--no-widgets` leaves the widgets and the
 App Group out).
 
-## Home Screen widgets
+## Home Screen widgets and Live Activities
 
 Any extension app can go on the Home Screen as a widget (the app's menu → Add to Home Screen…); tapping it opens just
 that app, full screen. The extension draws the widget with native views it describes as JSON (`pi.widget.update`, in
 `engine/src/extensions/widgets.ts`); `PiWidgets` shows what pi saved, as a snapshot, and no extension code runs in it.
 Its buttons run the extension's code in pi, in the background, without opening it (`pi.widget.onAction`; iOS launches
-pi for them if it isn't running), or switch the widget to another look the extension drew.
+pi for them if it isn't running), or switch the widget to another look the extension drew. With the same views, an
+extension shows something in progress as a Live Activity, on the Lock Screen and in the Dynamic Island
+(`pi.liveActivity`, in `engine/src/extensions/activities.ts`), and updates it while it runs.
 
 ## Apple Watch
 

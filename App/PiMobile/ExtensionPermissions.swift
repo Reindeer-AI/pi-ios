@@ -3,8 +3,8 @@ import SwiftUI
 import UserNotifications
 import WebKit
 
-/// What each extension may use on this device: the camera, the microphone, the location, notifications, and each of the
-/// user's MCP servers (from its code, `pi.mcp`). pi asks the first time an extension wants one ("Allow “flights” to use
+/// What each extension may use on this device: the camera, the microphone, the location, notifications, Live Activities,
+/// and each of the user's MCP servers (from its code, `pi.mcp`). pi asks the first time an extension wants one ("Allow “flights” to use
 /// the camera?") and remembers the answer, yes or no, which the user changes in Settings → Extensions → the extension →
 /// Permissions. iOS then asks once more, for pi itself, the first time any extension uses the camera, the microphone,
 /// the location, or notifications. Kept on this device only, as iOS keeps its own permissions.
@@ -13,7 +13,7 @@ final class ExtensionPermissions {
     static let shared = ExtensionPermissions()
 
     enum Capability: String, CaseIterable, Identifiable {
-        case camera, microphone, location, notifications
+        case camera, microphone, location, notifications, liveActivities
         var id: String { rawValue }
 
         var title: String {
@@ -22,6 +22,7 @@ final class ExtensionPermissions {
             case .microphone: "Microphone"
             case .location: "Location"
             case .notifications: "Notifications"
+            case .liveActivities: "Live Activities"
             }
         }
 
@@ -31,6 +32,7 @@ final class ExtensionPermissions {
             case .microphone: "mic"
             case .location: "location"
             case .notifications: "bell"
+            case .liveActivities: "timer"
             }
         }
 
@@ -40,7 +42,7 @@ final class ExtensionPermissions {
             case .camera: "the camera"
             case .microphone: "the microphone"
             case .location: "your location"
-            case .notifications: nil
+            case .notifications, .liveActivities: nil
             }
         }
 
@@ -49,6 +51,7 @@ final class ExtensionPermissions {
             let used = capabilities.compactMap(\.used)
             var parts = used.isEmpty ? [] : ["use " + used.joined(separator: " and ")]
             if capabilities.contains(.notifications) { parts.append("send you notifications") }
+            if capabilities.contains(.liveActivities) { parts.append("show Live Activities on your Lock Screen") }
             return parts.joined(separator: " and ")
         }
     }

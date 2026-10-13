@@ -6,6 +6,7 @@ import Foundation
 ///     Widgets/content/<id>.json      an app's widget, as its extension drew it last (`WidgetContent`)
 ///     Widgets/images/<hash>.<ext>    the images its layouts show, as pi saved them
 ///     Widgets/views.json             the look each app's widgets show, when a button switched it (`show`)
+///     Widgets/activities/<key>.json  a Live Activity's views, as its extension drew them last (`ActivityLayout`)
 ///
 /// pi writes them, except views.json, which the widget's buttons write. A build without the App Group (it needs its
 /// own provisioning) has no directory: pi then keeps no widgets.
@@ -93,6 +94,33 @@ public enum WidgetStore {
         try? JSONEncoder().encode(views).write(to: url, options: .atomic)
     }
 
+    // MARK: Live Activities
+
+    public static func activityLayout(_ key: String) -> ActivityLayout? {
+        guard let url = activityURL(key), let data = try? Data(contentsOf: url) else { return nil }
+        return ActivityLayout(data: data)
+    }
+
+    public static func setActivityLayout(_ data: Data, for key: String) throws {
+        guard let url = activityURL(key) else { return }
+        try FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
+        try data.write(to: url, options: .atomic)
+    }
+
+    /// Removes the views of Live Activities iOS no longer shows.
+    public static func removeActivityLayouts(except keys: Set<String>) {
+        guard let folder = directory?.appending(path: "activities"),
+              let names = try? FileManager.default.contentsOfDirectory(atPath: folder.path()) else { return }
+        for name in names where name.hasSuffix(".json") && !keys.contains(String(name.dropLast(".json".count))) {
+            try? FileManager.default.removeItem(at: folder.appending(path: name))
+        }
+    }
+
+    private static func activityURL(_ key: String) -> URL? {
+        guard !key.isEmpty, key.allSatisfy({ $0.isLetter || $0.isNumber || $0 == "-" }) else { return nil }
+        return directory?.appending(path: "activities").appending(path: key + ".json")
+    }
+
     // MARK: Images
 
     /// A saved image's file (`src` "file:<name>" in a layout).
@@ -114,8 +142,13 @@ public enum WidgetStore {
         guard let folder = directory?.appending(path: "images"),
               let names = try? FileManager.default.contentsOfDirectory(atPath: folder.path()) else { return }
         var used = Set<String>()
-        for id in contentIDs() {
-            guard let url = contentURL(for: id), let text = try? String(contentsOf: url, encoding: .utf8) else { continue }
+        var files = contentIDs().compactMap(contentURL(for:))
+        if let activities = directory?.appending(path: "activities"),
+           let names = try? FileManager.default.contentsOfDirectory(atPath: activities.path()) {
+            files += names.map { activities.appending(path: $0) }
+        }
+        for file in files {
+            guard let text = try? String(contentsOf: file, encoding: .utf8) else { continue }
             for name in names where text.contains("file:\(name)") { used.insert(name) }
         }
         for name in names where !used.contains(name) { try? FileManager.default.removeItem(at: folder.appending(path: name)) }

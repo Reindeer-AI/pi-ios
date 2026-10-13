@@ -170,6 +170,45 @@ public struct WidgetContent: Sendable {
     }
 }
 
+/// A Live Activity, as its extension drew it last: the Lock Screen's view and the Dynamic Island's regions.
+public struct ActivityLayout: Sendable {
+    public let lockScreen: WidgetNode?
+    public let compactLeading: WidgetNode?
+    public let compactTrailing: WidgetNode?
+    public let minimal: WidgetNode?
+    public let expandedLeading: WidgetNode?
+    public let expandedTrailing: WidgetNode?
+    public let expandedCenter: WidgetNode?
+    public let expandedBottom: WidgetNode?
+    /// Behind the Lock Screen's view (a color or gradient); nil: the system's.
+    public let background: JSONValue?
+    /// The Dynamic Island's keyline, and the color of its default regions.
+    public let tint: JSONValue?
+    /// Whether the Lock Screen's view sits inside the system's margins (the default).
+    public let margins: Bool
+
+    /// Whether it has any expanded region (without, the expanded island shows the Lock Screen's view).
+    public var hasExpanded: Bool { [expandedLeading, expandedTrailing, expandedCenter, expandedBottom].contains { $0 != nil } }
+
+    /// The stored JSON: `{ version: 1, lockScreen, compactLeading, compactTrailing, minimal, expanded: { leading, trailing,
+    /// center, bottom }, background, tint, margins }`.
+    public init?(data: Data) {
+        guard let json = try? JSONDecoder().decode(JSONValue.self, from: data), json.object != nil else { return nil }
+        let node = { (value: JSONValue?) in value.flatMap(WidgetNode.init(json:)) }
+        lockScreen = node(json["lockScreen"])
+        compactLeading = node(json["compactLeading"])
+        compactTrailing = node(json["compactTrailing"])
+        minimal = node(json["minimal"])
+        expandedLeading = node(json["expanded"]?["leading"])
+        expandedTrailing = node(json["expanded"]?["trailing"])
+        expandedCenter = node(json["expanded"]?["center"])
+        expandedBottom = node(json["expanded"]?["bottom"])
+        background = json["background"].flatMap { $0 == .null ? nil : $0 }
+        tint = json["tint"].flatMap { $0 == .null ? nil : $0 }
+        margins = json["margins"]?.bool ?? true
+    }
+}
+
 /// What a widget button does.
 public enum WidgetButtonAction: Hashable, Sendable {
     /// Runs the extension's handler (`pi.widget.onAction`) in pi, with the button's value as JSON.

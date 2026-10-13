@@ -93,3 +93,18 @@ private func content(_ json: String) throws -> WidgetContent {
     #expect(button.children.first?.string("text") == "Refresh")
     #expect(button.props["value"]?["n"] == .number(1))
 }
+
+@Test func liveActivityLayouts() throws {
+    let layout = try #require(ActivityLayout(data: Data("""
+    { "version": 1, "lockScreen": { "type": "text", "text": "LY315" }, "minimal": { "type": "symbol", "name": "airplane" },
+      "expanded": { "bottom": { "type": "progress", "value": 0.5 } }, "tint": "orange", "background": null }
+    """.utf8)))
+    #expect(layout.lockScreen?.string("text") == "LY315")
+    #expect(layout.minimal?.type == "symbol")
+    #expect(layout.expandedBottom?.type == "progress")
+    #expect(layout.compactLeading == nil)
+    #expect(layout.hasExpanded)
+    #expect(layout.tint == .string("orange"))
+    #expect(layout.background == nil)
+    #expect(layout.margins)
+}

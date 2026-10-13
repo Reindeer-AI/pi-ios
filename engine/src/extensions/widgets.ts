@@ -61,7 +61,7 @@ export function scopeOf(registryName: string): { extension: string; scope: strin
 	return { extension: registryName.replace(/^default:/, ""), scope: "default" };
 }
 
-function widgetId(extension: string, app: string, scope: string): string {
+export function widgetId(extension: string, app: string, scope: string): string {
 	return scope.startsWith("session:") ? `${extension}/${app}@${scope.slice("session:".length)}` : `${extension}/${app}`;
 }
 
@@ -69,26 +69,13 @@ function widgetId(extension: string, app: string, scope: string): string {
  * instance's button handlers. */
 export function widgetApi(registryName: string, appNames: () => string[], actions: Map<string, WidgetActionHandler>) {
 	const { extension, scope } = scopeOf(registryName);
-	const pick = (app: unknown): string => {
-		const names = appNames();
-		if (app !== undefined) {
-			if (typeof app !== "string" || !names.includes(app)) {
-				throw new Error(`pi.widget: ${extension} has no app named ${JSON.stringify(app)}${names.length ? ` (its apps: ${names.join(", ")})` : ""}`);
-			}
-			return app;
-		}
-		if (names.length === 0) throw new Error("pi.widget: a widget opens an app; register one first (pi.registerApp)");
-		if (names.length > 1) throw new Error(`pi.widget: ${extension} has several apps; name the widget's app ({ app: "${names[0]}", … })`);
-		return names[0]!;
-	};
+	const pick = (app: unknown) => pickApp("pi.widget", extension, appNames(), app);
 	return {
 		/** Draws the app's widget (every size the user put on the Home Screen); resolves to false in a build without widgets. */
 		update: async (spec: WidgetSpec): Promise<boolean> => {
 			const app = pick(spec?.app);
 			const content = normalize(spec);
-			for (const action of actionsIn(content)) {
-				if (!actions.has(action)) throw new Error(`pi.widget: a button's action "${action}" has no handler: pi.widget.onAction("${action}", async ({ signal }) => { … })`);
-			}
+			checkActions("pi.widget", content, actions);
 			if (JSON.stringify(content).length > MAX_SIZE) throw new Error(`pi.widget: the widget is over ${MAX_SIZE / 1024 / 1024} MB; use smaller images`);
 			const result = await request<{ saved: boolean } | null>("widget", "update", { id: widgetId(extension, app, scope), content });
 			return result?.saved ?? false;
@@ -103,6 +90,31 @@ export function widgetApi(registryName: string, appNames: () => string[], action
 			actions.set(name, handler);
 		},
 	};
+}
+
+/** The app a widget or Live Activity opens: the one named, else the extension's only app. */
+export function pickApp(api: string, extension: string, names: string[], app: unknown): string {
+	if (app !== undefined) {
+		if (typeof app !== "string" || !names.includes(app)) {
+			throw new Error(`${api}: ${extension} has no app named ${JSON.stringify(app)}${names.length ? ` (its apps: ${names.join(", ")})` : ""}`);
+		}
+		return app;
+	}
+	if (names.length === 0) throw new Error(`${api}: a tap opens an app; register one first (pi.registerApp)`);
+	if (names.length > 1) throw new Error(`${api}: ${extension} has several apps; name the one it opens ({ app: "${names[0]}", … })`);
+	return names[0]!;
+}
+
+/** Every button's action has a handler (`pi.widget.onAction`). */
+export function checkActions(api: string, content: unknown, actions: Map<string, WidgetActionHandler>): void {
+	for (const action of actionsIn(content)) {
+		if (!actions.has(action)) throw new Error(`${api}: a button's action "${action}" has no handler: pi.widget.onAction("${action}", async ({ signal }) => { … })`);
+	}
+}
+
+/** A layout's node, checked (`budget` counts the nodes of everything one widget or Live Activity has). */
+export function checkNode(value: unknown, path: string, budget: { nodes: number }): Record<string, unknown> {
+	return node(value, path, 0, budget);
 }
 
 /** Runs a button's handler within `timeoutMs` (iOS gives a widget's button little time); its signal aborts then. */
@@ -149,12 +161,13 @@ export function forgetApps(registryName: string): void {
 	void request("widget", "forget", { extension, scope }).catch((error: unknown) => console.warn(`widget apps of ${extension}: ${String(error)}`));
 }
 
-/** How to draw a widget: the environment guide's `widgets` topic. */
-export const WIDGETS_GUIDE = `Home Screen widgets for your extensions' apps (iOS). The user puts an app on the Home Screen or Lock Screen as a widget (the app's menu → Add to Home Screen…, or Edit → Add Widget → pi app); tapping it opens just that app, full screen. An app without a widget of its own shows its icon and title.
+/** How to draw a widget or a Live Activity: the environment guide's `widgets` topic. */
+export const WIDGETS_GUIDE = `Home Screen widgets and Live Activities for your extensions' apps (iOS), drawn with the same native views. The user puts an app on the Home Screen or Lock Screen as a widget (the app's menu → Add to Home Screen…, or Edit → Add Widget → pi app); tapping it opens just that app, full screen. An app without a widget of its own shows its icon and title.
 - Draw it with await pi.widget.update({ app?, layout, small?, medium?, large?, extraLarge?, circular?, rectangular?, inline?, background?, margins?, timeline?, views? }): native views described as JSON, checked when you call it (an error says what is wrong and where). app is the app's name, needed only when the extension has several; layout is for every size; small, medium, large and extraLarge are the Home Screen's sizes, circular, rectangular and inline the Lock Screen's. background is a fill; margins: false lets the layout reach the edges (then pad it yourself). pi.widget.clear(app?) goes back to the icon and title. update resolves to false in a build of pi without widgets.
 - It is a snapshot: iOS shows what you drew until you draw it again. Draw it whenever what it shows changes (from a command, the app's onMessage, a tool, a background check, or a button's action), not on a timer. No code runs in the widget, but a date node with style "relative" or "timer" stays live, and timeline: [{ at: Date, layout, … }] adds later looks that show on time without pi running.
 - Buttons: { type: "button", action: "refresh", value?: any JSON, children } runs your handler without opening pi: pi.widget.onAction("refresh", async ({ app, value, signal }) => { …; await pi.widget.update({ … }) }). iOS runs it in pi in the background (starting pi's engine if it isn't running, a second or two) and gives it about 20 seconds: keep it short, pass signal to fetch, and draw the widget again at the end; if it fails, the widget keeps its look. Register handlers when the extension loads; an update whose button names an action without a handler is refused. { type: "button", show: "details", children } switches the widget to another look, views: { details: { layout, … } }, at once and with no code; show: null goes back to the main look. All of that app's widgets switch together, and drawing the widget again keeps the view shown if it still exists. loading: true on a node shows a loading effect on it while an action runs. A button's children are laid out in a row (spacing?, alignment?).
 - Tap areas: open: "target" on any node opens the app and calls its registerApp onWidgetOpen(target, app), to show that item; the rest of the widget opens the app as it is.
+- Live Activities show something in progress (a flight, a delivery, a timer, a build) on the Lock Screen and in the Dynamic Island. const activity = await pi.liveActivity.start({ app?, lockScreen: node, compactLeading?, compactTrailing?, minimal?, expanded?: { leading?, trailing?, center?, bottom? }, background?, tint?, margins?, staleAt?, relevance? }) returns { id, app, update(spec, { alert?: { title, body } }), end({ final?: spec, dismiss?: "now" | Date }) }, or null when pi can't show one (Live Activities turned off for pi, or a build without them); the user is asked the first time each extension starts one, and a refusal rejects. lockScreen is required (at most about 160 points tall); compactLeading and compactTrailing sit beside the camera (a symbol, a few characters, or a timer: keep them tiny; the app's icon when compactLeading is left out); minimal is a small circle when another activity shares the island; expanded is the island when touched and held (lockScreen when left out). update replaces all of it (give every view again), and alert lights the screen and expands the island for a moment. iOS starts one only while pi is open or from a widget's or Live Activity's button, so start it from a command, a tool, the app, or such a button; update and end work whenever pi runs (a background check, a button's action). pi.liveActivity.list() gives the ones still showing, after a relaunch too (keep their ids in pi.synced if you need them). iOS ends a Live Activity after 8 hours and removes an ended one within 4; staleAt dims it when it's out of date. Taps open the app; buttons run actions (pi.widget.onAction) in pi, as a widget's do; show is for widgets only. A date node with style "timer" counts down on its own, the usual way to show time left.
 - Nodes: { type: "vstack" | "hstack" | "zstack", children, spacing?, alignment? ("leading", "trailing", "top", "bottom", "topLeading", …) }; { type: "text", text, font? ("largeTitle", "title", "title2", "title3", "headline", "subheadline", "body", "callout", "footnote", "caption", "caption2"), size?, weight? ("light", "medium", "semibold", "bold", "heavy", …), design? ("rounded", "monospaced", "serif"), lineLimit?, minScale?, align?, markdown?, monospacedDigit?, uppercase?, italic? }; { type: "date", date (a Date, ms, or an ISO string), style: "time" | "date" | "relative" | "timer" | "offset" }; { type: "symbol", name (an SF Symbol), size?, mode? ("hierarchical", "palette" with colors, "multicolor"), variable? (0…1) }; { type: "image", src (a data: or https: URL; pi stores it at most 1000 pixels, 24 per widget), fit? ("fill" | "fit") }; { type: "gauge", value, min?, max?, label?, valueLabel?, style? ("circular", "linear", "circularCapacity", "linearCapacity") }; { type: "progress", value, total?, label? }; { type: "chart", kind: "line" | "bar" | "area", values: numbers, min?, max?, axes? }; { type: "button", … }; { type: "spacer", min? }; { type: "divider" }. Children that are false, null or undefined are skipped (ok && { … }).
 - Any node also takes color, tint (gauges and progress), padding (a number, or { horizontal, vertical, top, leading, bottom, trailing }), frame ({ width, height, minWidth, maxWidth: "infinity", minHeight, maxHeight, alignment }), background (a fill), cornerRadius, border ({ color, width }), opacity, accent: true (tinted Home Screens color it), accessibility (what VoiceOver says; give a button that shows only a symbol one), and open. Text properties set on a stack apply to what it holds.
 - Colors: "primary", "secondary", "accent", "red", "orange", "yellow", "green", "mint", "teal", "cyan", "blue", "indigo", "purple", "pink", "brown", "gray", "white", "black", "#RRGGBB" or "#RRGGBBAA", or { light, dark }. A fill is a color or { gradient: "linear" | "radial", colors, from?, to? } (from and to: "top", "bottomTrailing", …).

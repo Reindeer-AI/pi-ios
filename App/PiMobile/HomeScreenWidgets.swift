@@ -44,6 +44,7 @@ enum HomeScreenWidgets {
                 }
                 try WidgetStore.setApps([], extension: name, scope: scope)
                 for id in WidgetStore.contentIDs() where belongs(id, to: name, scope: scope) { try? WidgetStore.setContent(nil, for: id) }
+                LiveActivities.endAll(of: name)
                 WidgetStore.removeUnusedImages()
                 reload()
                 return nil
@@ -96,8 +97,9 @@ enum HomeScreenWidgets {
 
     // MARK: Images
 
-    /// The widget with its images (`src`: a data: or https: URL) saved for the widget, as "file:<name>".
-    private static func savingImages(_ content: [String: Any]) async throws -> Any {
+    /// The widget (or Live Activity) with its images (`src`: a data: or https: URL) saved for the widget, as
+    /// "file:<name>".
+    static func savingImages(_ content: [String: Any]) async throws -> Any {
         var sources = Set<String>()
         collectSources(content, into: &sources)
         guard sources.count <= imageLimit else { throw AppError.message("A widget can show \(imageLimit) images at most") }

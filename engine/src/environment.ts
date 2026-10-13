@@ -42,7 +42,7 @@ const GUIDES = {
 	code: `What to write for what:
 - A computation or data processing: a Python script, or sh and awk, in the workspace.
 - Something the user should see or use: show_html, a complete HTML page with inline CSS and JavaScript (libraries from cdnjs.cloudflare.com or cdn.jsdelivr.net). In it, pi.prompt(text) sends text back to you after the user taps.
-- A new ability for yourself (a tool, a /command, an event hook, UI in the app, a Home Screen widget, a default for every session): a pi extension in TypeScript or JavaScript, added with extension_add (see the extensions topic, and the widgets topic for widgets).
+- A new ability for yourself (a tool, a /command, an event hook, UI in the app, a Home Screen widget, a Live Activity, a default for every session): a pi extension in TypeScript or JavaScript, added with extension_add (see the extensions topic, and the widgets topic for widgets and Live Activities).
 - There is no Node.js program: node script.js cannot run, and there is no npm. JavaScript runs in an extension (the app's JavaScript engine, WebKit) or in a show_html page. Extensions get Node's fs, path, os, crypto, events, util, url, buffer, asynchronous child_process (commands in this shell), and fetch; not execSync or spawnSync, native addons, or servers. Pure-JavaScript npm packages work through extension_add npm:<package>, without install scripts.
 - No compiler for C, C++, Rust, Go, or Swift, so nothing native can be built or run on the phone.
 - Real Node, npm, compilers, Docker, and test suites run on a Linux machine through Crabbox (crabbox topic).
@@ -51,7 +51,7 @@ const GUIDES = {
 	ui: `- Your replies are Markdown in a chat on a phone screen (about 390 points wide): short paragraphs, small tables, code blocks.
 - show_html puts an interactive card in the chat (see the panels section).
 - Extensions can ask the user through native dialogs (ctx.ui.select, confirm, input, editor), notify, show status lines and widgets above the message box, and show pi-tui components or HTML pages in panels.
-- Extensions' apps (pi.registerApp) are pages the user keeps in a session's dock. Any app can go on the Home Screen or Lock Screen as a widget its extension draws with native views; tapping it opens just that app, full screen, and its buttons can run the extension's code without opening pi (widgets topic).
+- Extensions' apps (pi.registerApp) are pages the user keeps in a session's dock. Any app can go on the Home Screen or Lock Screen as a widget its extension draws with native views; tapping it opens just that app, full screen, and its buttons can run the extension's code without opening pi. Extensions can also show something in progress as a Live Activity, on the Lock Screen and in the Dynamic Island (widgets topic).
 - The user can run your extensions' /commands and their own shell commands (!command) from the message box.`,
 
 	browser: `The browser tools are now on for this session, from your next step.
@@ -115,7 +115,7 @@ ${
 		: "- For GitHub (private repositories, pushing, pull requests, gh), tell the user to sign in at Settings → GitHub."
 }
 - Runs are durable: when iOS suspends or ends the app, your run resumes, but a tool call that was cut off is not repeated. Check what already happened before redoing anything with side effects.
-- To extend yourself (new tools, /commands, event hooks, UI in the app, Home Screen widgets), read environment_guide topic extensions first (and topic widgets for a widget). Extensions are written, added, and tested here: no npm, no build, no Crabbox.
+- To extend yourself (new tools, /commands, event hooks, UI in the app, Home Screen widgets, Live Activities), read environment_guide topic extensions first (and topic widgets for a widget or a Live Activity). Extensions are written, added, and tested here: no npm, no build, no Crabbox.
 - To use a real web browser (pages that need JavaScript or a sign-in), call environment_guide topic browser; it turns on the browser tools.
 - Before you rely on the rest in code, or when something fails as it would not on a computer, call environment_guide with the topic: ${TOPICS.join(", ")}.`,
 			),

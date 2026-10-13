@@ -516,6 +516,16 @@ public struct WidgetCanvas: View {
     public static func background(of entry: WidgetContent.Entry?) -> AnyShapeStyle? {
         Style.shapeStyle(entry?.background)
     }
+
+    /// A fill as layouts give one (a color or gradient).
+    public static func fill(_ value: JSONValue?) -> AnyShapeStyle? {
+        Style.shapeStyle(value)
+    }
+
+    /// A color as layouts give one.
+    public static func color(_ value: JSONValue?) -> Color? {
+        Style.color(value)
+    }
 }
 
 /// An app without a widget of its own: its icon and name, as its dock entry shows them.

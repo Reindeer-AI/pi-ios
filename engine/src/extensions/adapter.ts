@@ -73,6 +73,7 @@ import type { NodeContext } from "./node.ts";
 import { CONTEXT_EDIT_ENTRY, CUSTOM_ENTRY, CUSTOM_MESSAGE_ENTRY, type Histories, messageOf, type SessionEntry } from "./session.ts";
 import { getKeybindings } from "@earendil-works/pi-tui";
 import { type AppDefinition, type AppHandle, appKey, openApp, releaseApps, runningApp } from "./apps.ts";
+import { liveActivityApi } from "./activities.ts";
 import { type WidgetActionHandler, widgetApi } from "./widgets.ts";
 import { htmlPanel } from "./panels.ts";
 import { componentTheme } from "./components.ts";
@@ -577,6 +578,8 @@ class PiExtension implements Adapted {
 			mcp: mcpApi(extensionOf(this.name)),
 			// iOS: its apps' Home Screen widgets (widgets.ts).
 			widget: widgetApi(this.name, () => [...this.appNames], instance.widgetActions),
+			// iOS: its Live Activities, on the Lock Screen and in the Dynamic Island (activities.ts).
+			liveActivity: liveActivityApi(this.name, () => [...this.appNames], instance.widgetActions),
 			events: eventBus(conversationId),
 			getActiveTools: () => [...instance.tools.keys()],
 			getAllTools: () => [...instance.tools.values()].map((tool) => ({ name: tool.name, description: tool.description })),

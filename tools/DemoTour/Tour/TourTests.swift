@@ -2899,6 +2899,98 @@ final class TourTests: XCTestCase {
         removePiWidget(springboard)
     }
 
+    /// Live Activities (pi.liveActivity): SHARED_FILE is widgettest.piext (Fixtures/widgettest.ts). Its command starts
+    /// one (pi asks the first time); with pi in the background it's in the Dynamic Island, whose expanded view's button
+    /// runs the extension's action in pi, which draws it again, and in Notification Center (as on the Lock Screen). A
+    /// tap opens the app full screen; the commands update it (with an alert) and end it.
+    func testLiveActivity() throws {
+        executionTimeAllowance = 8 * 60
+        let path = try XCTUnwrap(ProcessInfo.processInfo.environment["SHARED_FILE"], "the test extension's .piext")
+        pi.launchArguments += ["-openSharedFile", path]
+        launchReady()
+        tap(pi.buttons["Add to Every Session"].firstMatch)
+        pause(2)
+        if pi.buttons["Done"].exists { pi.buttons["Done"].firstMatch.tap() }
+        let message = pi.textFields["Message pi"]
+        func command(_ text: String) {
+            tap(message)
+            message.typeText(text)
+            tap(pi.buttons["Send"].firstMatch)
+        }
+        func notice(_ prefix: String) -> XCUIElement {
+            pi.staticTexts.matching(NSPredicate(format: "label BEGINSWITH %@", prefix)).firstMatch
+        }
+        func shot(_ name: String) {
+            let attachment = XCTAttachment(screenshot: XCUIScreen.main.screenshot())
+            attachment.name = name
+            attachment.lifetime = .keepAlways
+            add(attachment)
+        }
+        let springboard = XCUIApplication(bundleIdentifier: "com.apple.springboard")
+        func text(_ label: String) -> XCUIElement {
+            springboard.descendants(matching: .any).matching(NSPredicate(format: "label CONTAINS %@", label)).firstMatch
+        }
+        tap(pi.buttons["New session"].firstMatch)
+        pause(1.5)
+
+        command("/activitystart")
+        let ask = pi.alerts["Allow “widgettest” to show Live Activities on your Lock Screen?"]
+        if ask.waitForExistence(timeout: 15) {
+            pause(1)
+            ask.buttons["Allow"].tap()
+        }
+        let started = notice("activity")
+        XCTAssertTrue(started.waitForExistence(timeout: 20), "the extension heard back")
+        print("start: \(started.label)")
+        XCTAssertTrue(started.label.hasPrefix("activity started"), "the Live Activity started")
+        pause(2)
+
+        // The Dynamic Island, with pi in the background.
+        XCUIDevice.shared.press(.home)
+        pause(2)
+        let compact = text("B7")
+        if !compact.waitForExistence(timeout: 10) { print("SPRINGBOARD (no island):\n\(springboard.debugDescription)") }
+        XCTAssertTrue(compact.exists, "the compact Dynamic Island")
+        shot("island-compact")
+        // Expanded (touch and hold): its button runs the extension's action in pi.
+        compact.press(forDuration: 1.5)
+        let refresh = springboard.buttons["Refresh activity"].firstMatch
+        if !refresh.waitForExistence(timeout: 10) { print("SPRINGBOARD (no expanded island):\n\(springboard.debugDescription)") }
+        XCTAssertTrue(text("Gate B7").exists, "the expanded Dynamic Island")
+        shot("island-expanded")
+        refresh.tap()
+        XCTAssertTrue(text("Refreshed 1").waitForExistence(timeout: 30), "the action ran in pi and drew it again")
+        XCTAssertNotEqual(pi.state, .runningForeground, "pi stayed in the background")
+        pause(1)
+        shot("island-refreshed")
+        XCUIDevice.shared.press(.home)
+        pause(2)
+
+        // As on the Lock Screen: in Notification Center.
+        springboard.coordinate(withNormalizedOffset: CGVector(dx: 0.2, dy: 0.005))
+            .press(forDuration: 0.1, thenDragTo: springboard.coordinate(withNormalizedOffset: CGVector(dx: 0.2, dy: 0.7)))
+        pause(2)
+        XCTAssertTrue(text("LY315 to London").waitForExistence(timeout: 10), "the Lock Screen's view")
+        shot("lock-screen-view")
+        // A tap opens the app full screen.
+        text("LY315 to London").tap()
+        let back = pi.buttons["Back to pi"]
+        XCTAssertTrue(back.waitForExistence(timeout: 20), "the app full screen")
+        pause(1)
+        back.tap()
+
+        command("/activityupdate")
+        XCTAssertTrue(notice("activity updated").waitForExistence(timeout: 20), "updated, with an alert")
+        pause(3)
+        command("/activityend")
+        let ended = notice("activity ended")
+        XCTAssertTrue(ended.waitForExistence(timeout: 20), "ended")
+        XCTAssertEqual(ended.label, "activity ended 1")
+        XCUIDevice.shared.press(.home)
+        pause(2)
+        XCTAssertFalse(text("B7").exists, "gone from the Dynamic Island")
+    }
+
     /// Adds pi's widget to the Home Screen from the widget gallery (Edit → Add Widget → pi).
     private func addPiWidget(_ springboard: XCUIApplication) {
         func dump(_ what: String) { print("SPRINGBOARD (\(what)):\n\(springboard.debugDescription)") }

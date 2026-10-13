@@ -13,6 +13,7 @@ import WidgetKit
 struct PiWidgets: WidgetBundle {
     var body: some Widget {
         PiAppWidget()
+        PiLiveActivity()
     }
 }
 
