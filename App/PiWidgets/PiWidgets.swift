@@ -5,7 +5,9 @@ import WidgetKit
 
 // pi's widgets: one of the user's pi apps on the Home Screen or Lock Screen, as its extension draws it
 // (`pi.widget.update`, saved by pi in the App Group, `WidgetStore`). No extension code runs here: the widget shows what
-// pi saved, and pi asks iOS to reload it when an extension draws it again. A tap opens the app full screen in pi.
+// pi saved, and pi asks iOS to reload it when an extension draws it again. A tap opens the app full screen in pi. Its
+// buttons run the extension's handler in pi, in the background (RunWidgetActionIntent, App/Shared), or switch the widget
+// to another of its looks here (ShowWidgetViewIntent).
 
 @main
 struct PiWidgets: WidgetBundle {
@@ -106,6 +108,10 @@ struct AppTimeline: AppIntentTimelineProvider {
 
     private func entries(for configuration: ChooseAppIntent) -> [AppEntry] {
         let now = Date.now
+        if let id = configuration.app?.id ?? AppChoiceQuery.firstApp()?.id, let view = WidgetStore.view(for: id),
+           let look = WidgetStore.content(for: id)?.views[view] {
+            return [AppEntry(date: now, app: WidgetStore.app(id: id), appID: id, content: look)]
+        }
         guard let id = configuration.app?.id ?? AppChoiceQuery.firstApp()?.id else {
             return [AppEntry(date: now, app: nil, appID: nil, content: nil, note: "Open an app in pi first, then choose it here.")]
         }
@@ -148,6 +154,19 @@ struct AppWidgetView: View {
             }
         }
         .widgetURL(entry.appID.map { WidgetLayout.openURL(app: $0) })
+        .environment(\.widgetButtonMaker, entry.appID.map(Self.buttons(for:)))
+    }
+
+    /// Buttons for the app's widget: its extension's actions, run in pi, and its other looks, shown here.
+    private static func buttons(for app: String) -> WidgetButtonMaker {
+        WidgetButtonMaker { action, label in
+            switch action {
+            case .run(let name, let value):
+                AnyView(Button(intent: RunWidgetActionIntent(app: app, action: name, value: value)) { label }.buttonStyle(.plain))
+            case .show(let view):
+                AnyView(Button(intent: ShowWidgetViewIntent(app: app, view: view ?? "")) { label }.buttonStyle(.plain))
+            }
+        }
     }
 
     private var isAccessory: Bool {
@@ -166,5 +185,30 @@ struct AppWidgetView: View {
         case .accessoryInline: "inline"
         default: "medium"
         }
+    }
+}
+
+/// A widget button's `show`: another of the widget's looks (`views`), or the main one; run here, in the widget.
+struct ShowWidgetViewIntent: AppIntent {
+    static let title: LocalizedStringResource = "Show a widget's view"
+    static let isDiscoverable = false
+
+    @Parameter(title: "App")
+    var app: String
+
+    /// "" for the main look.
+    @Parameter(title: "View")
+    var view: String
+
+    init() {}
+
+    init(app: String, view: String) {
+        self.app = app
+        self.view = view
+    }
+
+    func perform() async throws -> some IntentResult {
+        WidgetStore.setView(view.isEmpty ? nil : view, for: app)
+        return .result()
     }
 }

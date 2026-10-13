@@ -721,6 +721,11 @@ onCommand("checks.list", () => requireEngine().extensions.checks());
 /** Runs one background check (`key`: extension/name) within `timeoutMs`. */
 onCommand("checks.run", ({ key, timeoutMs }: { key: string; timeoutMs?: number }) => requireEngine().extensions.runCheck(key, timeoutMs ?? 20_000));
 
+/** A Home Screen widget's button: its extension's handler (`pi.widget.onAction`), run without the UI. */
+onCommand("widget.action", ({ id, action, value, timeoutMs }: { id: string; action: string; value?: unknown; timeoutMs?: number }) =>
+	requireEngine().extensions.runWidgetAction(id, action, value ?? null, timeoutMs ?? 20_000),
+);
+
 /** An extension's folder and files, to read and change in Settings (ExtensionSourceView). */
 onCommand("extensions.source", ({ name, sessionId }: { name: string; sessionId?: number }) => requireEngine().extensions.source(name, sessionId));
 

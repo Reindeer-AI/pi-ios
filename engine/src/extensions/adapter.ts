@@ -73,7 +73,7 @@ import type { NodeContext } from "./node.ts";
 import { CONTEXT_EDIT_ENTRY, CUSTOM_ENTRY, CUSTOM_MESSAGE_ENTRY, type Histories, messageOf, type SessionEntry } from "./session.ts";
 import { getKeybindings } from "@earendil-works/pi-tui";
 import { type AppDefinition, type AppHandle, appKey, openApp, releaseApps, runningApp } from "./apps.ts";
-import { widgetApi } from "./widgets.ts";
+import { type WidgetActionHandler, widgetApi } from "./widgets.ts";
 import { htmlPanel } from "./panels.ts";
 import { componentTheme } from "./components.ts";
 import { piTuiModule, showComponent } from "./tui.ts";
@@ -142,6 +142,8 @@ export interface Adapted {
 	readonly offeredApps: { name: string; title: string; icon: string | null; description: string | null }[];
 	/** Opens one of them in the session (or shows it, running); undefined when it has no such app. */
 	openApp(conversationId: number, name: string, options?: { visible?: boolean }): Promise<AppHandle | undefined>;
+	/** What a widget button's action runs (`pi.widget.onAction`), as its first instance registered it. */
+	widgetAction(name: string): WidgetActionHandler | undefined;
 	/** `session_shutdown` for one conversation's instance, or every instance, which are then dropped. */
 	shutdown(reason: "quit" | "reload", conversationId?: number): Promise<void>;
 }
@@ -283,6 +285,7 @@ function durableAdapted(name: string, extensions: Extension[]): Adapted {
 		apps: async () => [],
 		openApp: async () => undefined,
 		offeredApps: [],
+		widgetAction: () => undefined,
 		checks: [],
 		shutdown: async () => {},
 	};
@@ -296,6 +299,8 @@ class Instance {
 	readonly apps = new Map<string, AppDefinition>();
 	/** Background checks it registered (`pi.registerCheck`), by name. */
 	readonly checks = new Map<string, CheckDefinition>();
+	/** Widget buttons' handlers (`pi.widget.onAction`), by action. */
+	readonly widgetActions = new Map<string, WidgetActionHandler>();
 	/** Component widgets on screen, by key. */
 	readonly widgets = new Map<string, { close(): void }>();
 	readonly handlers = new Map<string, Handler[]>();
@@ -368,6 +373,10 @@ class PiExtension implements Adapted {
 
 	get checks(): CheckDefinition[] {
 		return [...this.template.checks.values()];
+	}
+
+	widgetAction(name: string): WidgetActionHandler | undefined {
+		return this.template.widgetActions.get(name);
 	}
 
 	get offeredApps(): { name: string; title: string; icon: string | null; description: string | null }[] {
@@ -567,7 +576,7 @@ class PiExtension implements Adapted {
 			// iOS: the user's MCP servers, each once the user allows this extension (mcp.ts).
 			mcp: mcpApi(extensionOf(this.name)),
 			// iOS: its apps' Home Screen widgets (widgets.ts).
-			widget: widgetApi(this.name, () => [...this.appNames]),
+			widget: widgetApi(this.name, () => [...this.appNames], instance.widgetActions),
 			events: eventBus(conversationId),
 			getActiveTools: () => [...instance.tools.keys()],
 			getAllTools: () => [...instance.tools.values()].map((tool) => ({ name: tool.name, description: tool.description })),

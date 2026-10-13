@@ -137,23 +137,29 @@ public struct WidgetContent: Sendable {
     }
 
     public let entries: [Entry]
+    /// Other looks its buttons switch to (`show`), by name.
+    public let views: [String: Entry]
     public let updatedAt: Date
 
-    public init(entries: [Entry], updatedAt: Date = .now) {
+    public init(entries: [Entry], views: [String: Entry] = [:], updatedAt: Date = .now) {
         self.entries = entries
+        self.views = views
         self.updatedAt = updatedAt
     }
 
-    /// The stored JSON: `{ version: 1, updatedAt, entries: [{ date, layouts, background, margins }] }` (dates in ms).
+    /// The stored JSON: `{ version: 1, updatedAt, entries: [{ date, layouts, background, margins }], views: { name: { … } } }`
+    /// (dates in ms).
     public init?(data: Data) {
         guard let json = try? JSONDecoder().decode(JSONValue.self, from: data), let entries = json["entries"]?.array else { return nil }
-        self.entries = entries.compactMap { entry -> Entry? in
-            guard let layouts = entry["layouts"]?.object else { return nil }
-            return Entry(date: entry["date"]?.number.map { Date(timeIntervalSince1970: $0 / 1000) },
+        func entry(_ value: JSONValue) -> Entry? {
+            guard let layouts = value["layouts"]?.object else { return nil }
+            return Entry(date: value["date"]?.number.map { Date(timeIntervalSince1970: $0 / 1000) },
                          layouts: layouts.compactMapValues(WidgetNode.init(json:)),
-                         background: entry["background"].flatMap { $0 == .null ? nil : $0 },
-                         margins: entry["margins"]?.bool ?? true)
+                         background: value["background"].flatMap { $0 == .null ? nil : $0 },
+                         margins: value["margins"]?.bool ?? true)
         }
+        self.entries = entries.compactMap(entry)
+        views = (json["views"]?.object ?? [:]).compactMapValues(entry)
         updatedAt = json["updatedAt"]?.number.map { Date(timeIntervalSince1970: $0 / 1000) } ?? .now
         if self.entries.isEmpty { return nil }
     }
@@ -162,6 +168,14 @@ public struct WidgetContent: Sendable {
     public func entry(at date: Date) -> Entry? {
         entries.filter { ($0.date ?? .distantPast) <= date }.max { ($0.date ?? .distantPast) < ($1.date ?? .distantPast) } ?? entries.first
     }
+}
+
+/// What a widget button does.
+public enum WidgetButtonAction: Hashable, Sendable {
+    /// Runs the extension's handler (`pi.widget.onAction`) in pi, with the button's value as JSON.
+    case run(action: String, value: String?)
+    /// Shows another of the widget's looks (`views`); nil: the main one.
+    case show(view: String?)
 }
 
 /// An app the widget can show and open: an extension's app (`pi.registerApp`), as the engine last loaded it.

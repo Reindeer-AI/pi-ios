@@ -2831,9 +2831,30 @@ final class TourTests: XCTestCase {
         removePiWidget(springboard)
         addPiWidget(springboard)
         shot("home-screen-widget")
-        let widget = springboard.descendants(matching: .any).matching(NSPredicate(format: "label CONTAINS %@", "TLV")).firstMatch
+        func widgetText(_ text: String) -> XCUIElement {
+            springboard.descendants(matching: .any).matching(NSPredicate(format: "label CONTAINS %@", text)).firstMatch
+        }
+        let widget = widgetText("TLV")
         XCTAssertTrue(widget.waitForExistence(timeout: 20), "the widget shows what the extension drew")
         print("widget: \(widget.label)")
+        XCTAssertTrue(widgetText("Draw 1").waitForExistence(timeout: 10), "its first draw")
+
+        // Its refresh button runs the extension's action in pi, which draws it again, without opening pi.
+        let refresh = springboard.buttons["Refresh flights"].firstMatch
+        if !refresh.waitForExistence(timeout: 10) { print("SPRINGBOARD (no refresh button):\n\(springboard.debugDescription)") }
+        refresh.tap()
+        XCTAssertTrue(widgetText("Draw 2").waitForExistence(timeout: 30), "the action ran in pi and drew the widget again")
+        XCTAssertNotEqual(pi.state, .runningForeground, "pi stayed in the background")
+        print("pi after the action: \(pi.state.rawValue)")
+        shot("widget-refreshed")
+        // Details: another look, and Back to the main one, in the widget itself.
+        tap(springboard.buttons["Details"].firstMatch)
+        XCTAssertTrue(widgetText("Gate B7").waitForExistence(timeout: 10), "the widget's other look")
+        shot("widget-details")
+        tap(springboard.buttons.matching(NSPredicate(format: "label CONTAINS %@", "Back")).firstMatch)
+        XCTAssertTrue(widget.waitForExistence(timeout: 10), "the main look again")
+        XCTAssertNotEqual(pi.state, .runningForeground, "pi stayed in the background")
+
         widget.tap()
 
         // pi, with only the app, full screen.
@@ -2865,6 +2886,16 @@ final class TourTests: XCTestCase {
         shot("cold-start")
         back.tap()
         XCTAssertTrue(message.waitForExistence(timeout: 10), "back in the app's session")
+
+        // The action with pi not running: iOS launches it in the background for it (the extension starts over).
+        pi.terminate()
+        pause(2)
+        XCTAssertTrue(refresh.waitForExistence(timeout: 10), "the refresh button")
+        refresh.tap()
+        XCTAssertTrue(widgetText("Draw 1").waitForExistence(timeout: 60), "pi, launched in the background, ran the action")
+        XCTAssertNotEqual(pi.state, .runningForeground, "pi stayed in the background")
+        print("pi after the action from a cold start: \(pi.state.rawValue)")
+        shot("widget-refreshed-cold")
         removePiWidget(springboard)
     }
 

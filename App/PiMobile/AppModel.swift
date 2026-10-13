@@ -390,6 +390,7 @@ final class AppModel {
             install(engine)
         }
         HomeScreenWidgets.install(engine)
+        WidgetActionRunner.run = { [weak self] app, action, value in try await self?.runWidgetAction(app, action: action, value: value) }
         engine.useVault(vault)
         browser.vault = vault
         crabbox.github = github

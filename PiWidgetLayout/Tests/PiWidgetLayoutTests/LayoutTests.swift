@@ -80,3 +80,16 @@ private func content(_ json: String) throws -> WidgetContent {
     #expect(Style.shapeStyle(.object(["gradient": .string("linear"), "colors": .array([.string("red"), .string("#00f")])])) != nil)
     #expect(Style.insets(.object(["horizontal": .number(8)]))?.leading == 8)
 }
+
+@Test func viewsAndButtons() throws {
+    let widget = try content("""
+    { "entries": [{ "layouts": { "default": { "type": "button", "action": "refresh", "value": { "n": 1 },
+        "children": [{ "type": "text", "text": "Refresh" }] } } }],
+      "views": { "details": { "layouts": { "default": { "type": "text", "text": "Gate B7" } } } } }
+    """)
+    #expect(widget.views["details"]?.layout(for: "small")?.string("text") == "Gate B7")
+    let button = try #require(widget.entries[0].layout(for: "medium"))
+    #expect(button.type == "button")
+    #expect(button.children.first?.string("text") == "Refresh")
+    #expect(button.props["value"]?["n"] == .number(1))
+}

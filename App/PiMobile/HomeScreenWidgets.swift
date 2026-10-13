@@ -250,6 +250,23 @@ extension AppModel {
         focusedApp?.error = message
     }
 
+    /// A widget button's action (RunWidgetActionIntent): its extension's handler, which draws the widget again; iOS may
+    /// have launched pi in the background for it, so the engine starts first if it must.
+    func runWidgetAction(_ id: String, action: String, value: String?) async throws {
+        await start()
+        guard phase == .ready else { throw AppError.message("pi couldn't start") }
+        await extensionsLoaded()
+        log("widget", "\(id): \(action)")
+        var params: [String: Any] = ["id": id, "action": action, "timeoutMs": 20_000]
+        if let value, let json = try? JSONSerialization.jsonObject(with: Data(value.utf8), options: .fragmentsAllowed) { params["value"] = json }
+        do {
+            _ = try await engine.command("widget.action", params)
+        } catch {
+            log("widget", "\(id): \(action) failed: \(error.localizedDescription)")
+            throw error
+        }
+    }
+
     /// Back to pi: the app goes to its session's dock, and the session shows.
     func leaveFocusedApp() {
         guard let focus = focusedApp else { return }

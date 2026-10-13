@@ -1,13 +1,25 @@
 /**
  * A test extension for testHomeScreenWidget: an app (Flights) and its Home Screen widget. /widgettest draws the widget
- * (a count of draws in it) and opens the app; the widget's flight is a tap area whose target ("LY315") the app shows
- * (onWidgetOpen). /widgetbad draws a layout pi refuses, and shows the error.
+ * and opens the app; the widget's flight is a tap area whose target ("LY315") the app shows (onWidgetOpen). Its refresh
+ * button runs the "refresh" action in pi without opening it, which draws the widget again ("Draw N" counts the draws
+ * since the extension loaded); Details shows another look, and Back the main one. /widgetbad draws a layout pi refuses.
  */
+
+// One module for every instance of the extension (the sessions' and the one actions run in).
+let draws = 0;
+let target = "none";
+
 export default function (pi: any) {
-	let draws = 0;
-	let target = "none";
 	const flight = (size: string) => ({ type: "text", text: "TLV → LHR", font: size, weight: "bold", design: "rounded", open: "LY315" });
 	const boards = { type: "date", date: Date.now() + 2 * 3600_000, style: "timer", monospacedDigit: true };
+	const refresh = (size: string) => ({
+		type: "button",
+		action: "refresh",
+		value: { from: "widget" },
+		accessibility: "Refresh flights",
+		children: [{ type: "symbol", name: "arrow.clockwise", font: size, weight: "semibold" }],
+	});
+	const background = { gradient: "linear", colors: ["#0B3D91", "#1E88E5"], from: "topLeading", to: "bottomTrailing" };
 
 	async function draw() {
 		draws += 1;
@@ -19,10 +31,18 @@ export default function (pi: any) {
 				color: "white",
 				frame: { maxWidth: "infinity", maxHeight: "infinity", alignment: "topLeading" },
 				children: [
-					{ type: "symbol", name: "airplane.departure", font: "title2" },
+					{ type: "hstack", children: [{ type: "symbol", name: "airplane.departure", font: "title2" }, { type: "spacer" }, refresh("headline")] },
 					{ type: "spacer" },
 					flight("headline"),
-					{ type: "hstack", spacing: 4, font: "caption", children: [{ type: "text", text: "Boards in" }, boards] },
+					{
+						type: "hstack",
+						font: "caption",
+						children: [
+							{ type: "text", text: `Draw ${draws}`, loading: true },
+							{ type: "spacer" },
+							{ type: "button", show: "details", children: [{ type: "text", text: "Details", weight: "bold" }] },
+						],
+					},
 				],
 			},
 			layout: {
@@ -38,7 +58,8 @@ export default function (pi: any) {
 							{ type: "symbol", name: "airplane.departure", font: "headline" },
 							{ type: "text", text: "Next flight", font: "headline" },
 							{ type: "spacer" },
-							{ type: "text", text: `#${draws}`, font: "caption", opacity: 0.8 },
+							{ type: "text", text: `Draw ${draws}`, font: "caption", opacity: 0.8, loading: true },
+							refresh("subheadline"),
 						],
 					},
 					flight("title"),
@@ -48,9 +69,32 @@ export default function (pi: any) {
 				],
 			},
 			rectangular: { type: "vstack", alignment: "leading", children: [flight("headline"), boards] },
-			background: { gradient: "linear", colors: ["#0B3D91", "#1E88E5"], from: "topLeading", to: "bottomTrailing" },
+			background,
+			views: {
+				details: {
+					layout: {
+						type: "vstack",
+						alignment: "leading",
+						spacing: 4,
+						color: "white",
+						frame: { maxWidth: "infinity", maxHeight: "infinity", alignment: "topLeading" },
+						children: [
+							{ type: "text", text: "Gate B7", font: "title2", weight: "bold" },
+							{ type: "text", text: "Seat 14A", font: "subheadline" },
+							{ type: "spacer" },
+							{ type: "button", show: null, children: [{ type: "symbol", name: "chevron.backward" }, { type: "text", text: "Back", weight: "bold" }] },
+						],
+					},
+					background,
+				},
+			},
 		});
 	}
+
+	pi.widget.onAction("refresh", async ({ value, signal }: { value: any; signal: AbortSignal }) => {
+		if (signal.aborted || value?.from !== "widget") return;
+		await draw();
+	});
 
 	pi.registerApp({
 		name: "board",

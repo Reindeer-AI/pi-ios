@@ -11,6 +11,7 @@ public struct WidgetNodeView: View {
     let node: WidgetNode
     /// The app a tap area (`open`) opens; nil: tap areas open nothing (a preview).
     let appID: String?
+    @Environment(\.widgetButtonMaker) private var buttonMaker
 
     public init(node: WidgetNode, appID: String?) {
         self.node = node
@@ -32,6 +33,7 @@ public struct WidgetNodeView: View {
             HStack(alignment: Style.vertical(node.string("alignment")), spacing: node.number("spacing").map { CGFloat($0) }) { children }
         case "zstack":
             ZStack(alignment: Style.alignment(node.string("alignment")) ?? .center) { children }
+        case "button": button
         case "text": text
         case "date": date
         case "symbol": symbol
@@ -49,6 +51,25 @@ public struct WidgetNodeView: View {
         ForEach(Array(node.children.enumerated()), id: \.offset) { _, child in
             WidgetNodeView(node: child, appID: appID)
         }
+    }
+
+    /// A button's children in a row; a button only in the widget, which has the intents to make one.
+    @ViewBuilder private var button: some View {
+        let label = HStack(alignment: Style.vertical(node.string("alignment")), spacing: node.number("spacing").map { CGFloat($0) }) { children }
+        if let buttonMaker, let action = buttonAction {
+            buttonMaker.make(action, AnyView(label))
+        } else {
+            label
+        }
+    }
+
+    private var buttonAction: WidgetButtonAction? {
+        if let action = node.string("action") {
+            let value = node.props["value"].flatMap { try? JSONEncoder().encode($0) }.flatMap { String(data: $0, encoding: .utf8) }
+            return .run(action: action, value: value)
+        }
+        if let show = node.props["show"] { return .show(view: show.string) }
+        return nil
     }
 
     private var text: Text {
@@ -201,6 +222,8 @@ private struct BoxStyle: ViewModifier {
                 view.overlay(shape.strokeBorder(color, lineWidth: CGFloat(border?["width"]?.number ?? 1)))
             }
             .apply(node.number("opacity").map { min(max($0, 0), 1) }) { $0.opacity($1) }
+            .apply(node.bool("loading") == true ? true : nil) { view, _ in view.invalidatableContent() }
+            .apply(node.string("accessibility")) { $0.accessibilityLabel($1) }
             .widgetAccentable(node.bool("accent") == true)
     }
 }
@@ -217,6 +240,20 @@ private struct TapTarget: ViewModifier {
             content
         }
     }
+}
+
+/// How the widget makes a button, with its App Intents (which only the widget has); without one, a button draws its
+/// children only (pi's preview).
+public struct WidgetButtonMaker: Sendable {
+    public let make: @MainActor @Sendable (WidgetButtonAction, AnyView) -> AnyView
+
+    public init(make: @escaping @MainActor @Sendable (WidgetButtonAction, AnyView) -> AnyView) {
+        self.make = make
+    }
+}
+
+extension EnvironmentValues {
+    @Entry public var widgetButtonMaker: WidgetButtonMaker? = nil
 }
 
 extension View {

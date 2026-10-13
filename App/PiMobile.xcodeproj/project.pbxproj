@@ -33,6 +33,7 @@
 		};
 		A20000000000000000000007 /* PiWatch */ = {isa = PBXFileSystemSynchronizedRootGroup; path = PiWatch; sourceTree = "<group>"; };
 		A30000000000000000000003 /* PiWidgets */ = {isa = PBXFileSystemSynchronizedRootGroup; path = PiWidgets; sourceTree = "<group>"; };
+		A30000000000000000000013 /* Shared */ = {isa = PBXFileSystemSynchronizedRootGroup; path = Shared; sourceTree = "<group>"; };
 /* End PBXFileSystemSynchronizedRootGroup section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -73,6 +74,7 @@
 				A10000000000000000000005 /* PiMobile */,
 				A20000000000000000000007 /* PiWatch */,
 				A30000000000000000000003 /* PiWidgets */,
+				A30000000000000000000013 /* Shared */,
 				A10000000000000000000003 /* Products */,
 			);
 			sourceTree = "<group>";
@@ -110,6 +112,7 @@
 			);
 			fileSystemSynchronizedGroups = (
 				A10000000000000000000005 /* PiMobile */,
+				A30000000000000000000013 /* Shared */,
 			);
 			name = PiMobile;
 			packageProductDependencies = (
@@ -142,7 +145,7 @@
 			buildPhases = (A3000000000000000000000D, A30000000000000000000004, A3000000000000000000000E, );
 			buildRules = ();
 			dependencies = ();
-			fileSystemSynchronizedGroups = (A30000000000000000000003, );
+			fileSystemSynchronizedGroups = (A30000000000000000000003, A30000000000000000000013, );
 			name = PiWidgets;
 			packageProductDependencies = (A30000000000000000000006, );
 			productName = PiWidgets;

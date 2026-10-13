@@ -5,9 +5,10 @@ import Foundation
 ///     Widgets/apps.json              the apps the widget can show (`WidgetApp`), as the engine last loaded them
 ///     Widgets/content/<id>.json      an app's widget, as its extension drew it last (`WidgetContent`)
 ///     Widgets/images/<hash>.<ext>    the images its layouts show, as pi saved them
+///     Widgets/views.json             the look each app's widgets show, when a button switched it (`show`)
 ///
-/// pi writes them; the widget only reads. A build without the App Group (it needs its own provisioning) has no
-/// directory: pi then keeps no widgets.
+/// pi writes them, except views.json, which the widget's buttons write. A build without the App Group (it needs its
+/// own provisioning) has no directory: pi then keeps no widgets.
 public enum WidgetStore {
     /// pi's App Group, for the app and for its widget extension (whose bundle ID is pi's and ".widgets").
     public static var groupIdentifier: String {
@@ -73,6 +74,23 @@ public enum WidgetStore {
 
     private static func contentURL(for id: String) -> URL? {
         directory?.appending(path: "content").appending(path: Data(id.utf8).base64URL + ".json")
+    }
+
+    // MARK: Views
+
+    /// The look a button switched an app's widgets to (nil: the main one).
+    public static func view(for id: String) -> String? {
+        guard let url = directory?.appending(path: "views.json"), let data = try? Data(contentsOf: url) else { return nil }
+        return (try? JSONDecoder().decode([String: String].self, from: data))?[id]
+    }
+
+    public static func setView(_ view: String?, for id: String) {
+        guard let directory else { return }
+        let url = directory.appending(path: "views.json")
+        var views = (try? Data(contentsOf: url)).flatMap { try? JSONDecoder().decode([String: String].self, from: $0) } ?? [:]
+        views[id] = view
+        try? FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        try? JSONEncoder().encode(views).write(to: url, options: .atomic)
     }
 
     // MARK: Images
