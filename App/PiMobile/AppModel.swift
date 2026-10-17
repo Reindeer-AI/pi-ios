@@ -41,6 +41,13 @@ final class AppModel {
         /// When the user last sent it a message (its creation, for sessions from before this was kept).
         var lastActive: Date
         var items: [TranscriptItem] = []
+        /// Each tool call's arguments by call (they live on the assistant message that made the call), for its tool row:
+        /// kept as items come (`add`), as a long session has thousands of rows.
+        private(set) var callArguments: [String: String] = [:]
+        /// Where the transcript's next earlier page ends (the engine's cursor); nil once it starts at the beginning. Only
+        /// the latest rows load when the session opens, earlier ones as the reader scrolls up (`loadEarlier`).
+        var earlier: [String: Int]?
+        var loadingEarlier = false
         /// Messages sent during a run that the agent hasn't taken yet, shown after the transcript until it does.
         var queued: [QueuedMessage] = []
         /// Extensions working for the user in this session (their commands, say), which Stop ends.
@@ -60,6 +67,20 @@ final class AppModel {
         var notice: Notice?
         var editorText: EditorText?
         var commands: [Command] = []
+
+        /// An item the run committed: in the transcript, and its tool calls indexed.
+        mutating func add(_ item: TranscriptItem) {
+            items.append(item)
+            if case .assistant(_, _, _, let calls, _) = item { for call in calls { callArguments[call.id] = call.arguments } }
+        }
+
+        /// Indexes the tool calls of the whole transcript (loaded at once).
+        mutating func indexCalls() {
+            callArguments = [:]
+            for case .assistant(_, _, _, let calls, _) in items {
+                for call in calls { callArguments[call.id] = call.arguments }
+            }
+        }
     }
 
     /// A session's context use, as pi's automatic compaction measures it.
@@ -1240,9 +1261,30 @@ final class AppModel {
               let index = self.index(of: id)
         else { return }
         sessions[index].items = (result["items"] as? [[String: Any]] ?? []).compactMap(TranscriptItem.init(item:))
+        sessions[index].indexCalls()
+        sessions[index].earlier = result["earlier"] as? [String: Int]
         sessions[index].running = result["running"] as? Bool ?? false
         sessions[index].loaded = true
         await refreshContext(id)
+    }
+
+    /// The transcript's next earlier page, before what's loaded (the reader scrolled to the top); false when there was
+    /// nothing to load.
+    @discardableResult
+    func loadEarlier(_ id: Int) async -> Bool {
+        guard let index = index(of: id), let cursor = sessions[index].earlier, !sessions[index].loadingEarlier else { return false }
+        sessions[index].loadingEarlier = true
+        defer { if let index = self.index(of: id) { sessions[index].loadingEarlier = false } }
+        guard let result = try? await engine.command("session.transcript", ["id": id, "earlier": cursor]) as? [String: Any],
+              let index = self.index(of: id), sessions[index].earlier == cursor
+        else { return false }
+        let known = Set(sessions[index].items.map(\.id))
+        let page = (result["items"] as? [[String: Any]] ?? []).compactMap(TranscriptItem.init(item:)).filter { !known.contains($0.id) }
+        sessions[index].items.insert(contentsOf: page, at: 0)
+        sessions[index].indexCalls()
+        sessions[index].earlier = result["earlier"] as? [String: Int]
+        log("session", "[\(id)] \(page.count) earlier rows\(sessions[index].earlier == nil ? ", from the start" : "")")
+        return !page.isEmpty
     }
 
     /// How full the session's context is now.
@@ -2051,7 +2093,9 @@ final class AppModel {
         case "message_end", "entry_appended":
             guard let entry = event["entry"] as? [String: Any], let item = TranscriptItem(entry: entry) else { return }
             if case .assistant = item { sessions[index].draft = nil }
-            if !sessions[index].items.contains(where: { $0.id == item.id }) { sessions[index].items.append(item) }
+            // An entry comes once with message_end and again as entry_appended, just after: the transcript's end is
+            // where it would be (a long session has thousands of items).
+            if !sessions[index].items.suffix(16).contains(where: { $0.id == item.id }) { sessions[index].add(item) }
             // A queued message the agent took: in the transcript now (by its text at once, then as the engine says).
             if case .user(_, let text) = item, !sessions[index].queued.isEmpty {
                 if let taken = sessions[index].queued.firstIndex(where: { $0.text == text }) { sessions[index].queued.remove(at: taken) }

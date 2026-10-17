@@ -375,6 +375,8 @@ private struct SessionView: View {
     @State private var following = true
     /// Whether the end of the transcript is in view.
     @State private var atEnd = true
+    /// Where an earlier page leaves the reader: set with the rows it adds, applied once they're laid out.
+    @State private var position = ScrollPosition(idType: Int.self)
 
     private var session: AppModel.Session? { app.sessions.first { $0.id == id } }
     private var browser: BrowserSession? { app.browser.sessions[id] }
@@ -395,18 +397,21 @@ private struct SessionView: View {
             ScrollView {
                 LazyVStack(alignment: .leading, spacing: 14) {
                     if let session {
+                        // A long session loads its latest rows; earlier ones a page at a time from the top.
+                        if session.earlier != nil {
+                            EarlierMessages(loading: session.loadingEarlier) { loadEarlier() }
+                        }
+                        // Straight in the lazy stack (a view around them would have it build every row). Each row is
+                        // equal while its item is, so a keystroke or a streamed token doesn't draw the rows again.
                         ForEach(session.items) { item in
-                            TranscriptRow(item: item, items: session.items) { text in
-                                following = true
-                                Task { await app.send(text, to: id) }
-                            }
-                                .contextMenu {
-                                    if let text = item.copyableText {
-                                        Button("Copy", systemImage: "doc.on.doc") { UIPasteboard.general.string = text }
-                                        Button("Select Text", systemImage: "selection.pin.in.out") { selecting = SelectableText(text: text) }
-                                    }
-                                    Button("Fork from Here", systemImage: "arrow.triangle.branch") { fork(at: item.id) }
-                                }
+                            TranscriptRow(item: item, arguments: item.toolCallId.flatMap { session.callArguments[$0] } ?? "",
+                                          prompt: { text in
+                                              following = true
+                                              Task { await app.send(text, to: id) }
+                                          },
+                                          select: { selecting = SelectableText(text: $0) },
+                                          fork: { fork(at: $0) })
+                                .equatable()
                         }
                         if let draft = session.draft {
                             AssistantText(text: draft.text, thinking: draft.thinking, streaming: true)
@@ -441,6 +446,7 @@ private struct SessionView: View {
             .defaultScrollAnchor(.bottom, for: .initialOffset)
             .defaultScrollAnchor(.bottom, for: .alignment)
             .defaultScrollAnchor(following ? .bottom : nil, for: .sizeChanges)
+            .scrollPosition($position)
             .onScrollGeometryChange(for: Bool.self) { geometry in
                 geometry.contentOffset.y + geometry.containerSize.height - geometry.contentInsets.bottom >= geometry.contentSize.height - 40
             } action: { _, isAtEnd in
@@ -449,7 +455,8 @@ private struct SessionView: View {
             .onScrollPhaseChange { _, phase in
                 switch phase {
                 case .interacting: following = false
-                case .idle where atEnd: following = true
+                // Wherever scrolling ends (a tap on the status bar scrolls to the top without the reader dragging).
+                case .idle: following = atEnd
                 default: break
                 }
             }
@@ -616,6 +623,17 @@ private struct SessionView: View {
         }
         .onChange(of: session?.editorText) { _, value in
             if let value { prompt = value.append ? prompt + value.text : value.text }
+        }
+    }
+
+    /// The transcript's earlier page, added above; the row that was first stays at the top, where the reader was. (The
+    /// position is set in the same update as the rows, so the scroll view applies it after laying them out.)
+    private func loadEarlier() {
+        let first = session?.items.first?.id
+        Task {
+            guard await app.loadEarlier(id), let first else { return }
+            following = false
+            position.scrollTo(id: first, anchor: .top)
         }
     }
 
@@ -973,13 +991,50 @@ struct ExtensionDialogView: View {
     }
 }
 
-private struct TranscriptRow: View {
-    let item: TranscriptItem
-    let items: [TranscriptItem]
-    /// Sends a message to the session (from a `show_html` card).
-    let prompt: (String) -> Void
+/// Above a transcript that doesn't start at the beginning: loads the earlier rows.
+private struct EarlierMessages: View {
+    let loading: Bool
+    let load: () -> Void
 
     var body: some View {
+        Button(action: load) {
+            HStack(spacing: 8) {
+                if loading { ProgressView().controlSize(.small) }
+                Text(loading ? "Loading earlier messages…" : "Earlier messages").font(.footnote)
+            }
+            .frame(maxWidth: .infinity)
+            .padding(.vertical, 6)
+        }
+        .buttonStyle(.bordered)
+        .disabled(loading)
+    }
+}
+
+/// A committed transcript row. A long session has thousands: equal while its item is (its actions aside), a row isn't
+/// drawn again for a keystroke in the message box, a streamed token, or a new item.
+private struct TranscriptRow: View, Equatable {
+    let item: TranscriptItem
+    /// A tool row's call's arguments ("" for the others).
+    let arguments: String
+    /// Sends a message to the session (from a `show_html` card).
+    let prompt: (String) -> Void
+    /// Opens the row's text for selecting part of it (its menu's Select Text).
+    let select: (String) -> Void
+    let fork: (Int) -> Void
+
+    nonisolated static func == (lhs: Self, rhs: Self) -> Bool { lhs.item == rhs.item && lhs.arguments == rhs.arguments }
+
+    var body: some View {
+        content.contextMenu {
+            if let text = item.copyableText {
+                Button("Copy", systemImage: "doc.on.doc") { UIPasteboard.general.string = text }
+                Button("Select Text", systemImage: "selection.pin.in.out") { select(text) }
+            }
+            Button("Fork from Here", systemImage: "arrow.triangle.branch") { fork(item.id) }
+        }
+    }
+
+    @ViewBuilder private var content: some View {
         switch item {
         case .user(_, let text):
             let message = Attachments.split(text)
@@ -1001,10 +1056,10 @@ private struct TranscriptRow: View {
                 if let error { Label(error, systemImage: "exclamationmark.triangle").font(.footnote).foregroundStyle(.red) }
             }
         case .tool(_, let toolCallId, "show_html", _, false):
-            let page = htmlCard(for: toolCallId)
+            let page = Self.pages.value(for: toolCallId) { Self.page(from: arguments) }
             HTMLCard(callId: toolCallId, title: page.title, html: page.html, prompt: prompt)
-        case .tool(_, let toolCallId, let toolName, let output, let isError):
-            ToolCard(name: toolName, arguments: arguments(for: toolCallId), output: output, isError: isError, running: false)
+        case .tool(_, _, let toolName, let output, let isError):
+            ToolCard(name: toolName, arguments: arguments, output: output, isError: isError, running: false)
         case .custom(_, let customType, let text):
             VStack(alignment: .leading, spacing: 4) {
                 Label(customType, systemImage: "puzzlepiece.extension").font(.caption).foregroundStyle(.secondary)
@@ -1021,21 +1076,38 @@ private struct TranscriptRow: View {
         }
     }
 
-    /// A `show_html` card's title and page, from the call.
-    private func htmlCard(for toolCallId: String) -> (title: String, html: String) {
-        let object = arguments(for: toolCallId).data(using: .utf8)
-            .flatMap { try? JSONSerialization.jsonObject(with: $0) as? [String: Any] } ?? [:]
+    /// A `show_html` card's title and page, from its call's arguments (by call, as a row scrolled back into view is drawn
+    /// again).
+    private static let pages = RenderCache<(title: String, html: String)>(countLimit: 100)
+
+    private static func page(from arguments: String) -> (title: String, html: String) {
+        let object = arguments.data(using: .utf8).flatMap { try? JSONSerialization.jsonObject(with: $0) as? [String: Any] } ?? [:]
         return (object["title"] as? String ?? "", object["html"] as? String ?? "")
     }
+}
 
-    /// The call's arguments live on the assistant message that requested it.
-    private func arguments(for toolCallId: String) -> String {
-        for item in items {
-            if case .assistant(_, _, _, let calls, _) = item, let call = calls.first(where: { $0.id == toolCallId }) {
-                return call.arguments
-            }
-        }
-        return ""
+/// What rows work out from their text (parsed Markdown, a tool's summary, a `show_html` page), kept while rows come and
+/// go: scrolling a long transcript draws rows again. NSCache lets them go under memory pressure.
+private final class RenderCache<Value> {
+    private final class Box {
+        let value: Value
+        init(_ value: Value) { self.value = value }
+    }
+
+    private let cache = NSCache<NSString, Box>()
+
+    /// `costLimit`: the keys' total length (a value is about as big as the text it comes from).
+    init(countLimit: Int, costLimit: Int = 0) {
+        cache.countLimit = countLimit
+        cache.totalCostLimit = costLimit
+    }
+
+    func value(for key: String, make: () -> Value) -> Value {
+        let key = key as NSString
+        if let kept = cache.object(forKey: key) { return kept.value }
+        let value = make()
+        cache.setObject(Box(value), forKey: key, cost: key.length)
+        return value
     }
 }
 
@@ -1244,7 +1316,8 @@ private struct AssistantText: View {
                 .foregroundStyle(.secondary)
             }
             if !text.isEmpty {
-                MarkdownText(text: text)
+                // Each partial text of a streaming answer is drawn once: not kept.
+                MarkdownText(text: text, kept: !streaming)
             } else if streaming {
                 WorkingIndicator(label: "Thinking")
             }
@@ -1260,16 +1333,41 @@ private struct MarkdownText: View {
         case table(MarkdownTable.Content)
     }
 
+    /// A segment ready to draw (prose as attributed text).
+    enum Rendered {
+        case prose(AttributedString)
+        case code(language: String, code: String)
+        case table(MarkdownTable.Content)
+    }
+
     let text: String
+    /// Whether the parsed text is kept for the next time it's drawn.
+    var kept = true
 
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
-            ForEach(Array(Self.segments(of: text).enumerated()), id: \.offset) { _, segment in
+            ForEach(Array(rendered.enumerated()), id: \.offset) { _, segment in
                 switch segment {
-                case .prose(let prose): Text(Self.inline(prose)).textSelection(.enabled)
+                case .prose(let prose): Text(prose).textSelection(.enabled)
                 case .code(let language, let code): CodeBlock(language: language, code: code)
                 case .table(let table): MarkdownTable(content: table)
                 }
+            }
+        }
+    }
+
+    private var rendered: [Rendered] {
+        kept ? Self.parsed.value(for: text) { Self.render(text) } : Self.render(text)
+    }
+
+    private static let parsed = RenderCache<[Rendered]>(countLimit: 500, costLimit: 8_000_000)
+
+    static func render(_ text: String) -> [Rendered] {
+        segments(of: text).map { segment in
+            switch segment {
+            case .prose(let prose): .prose(inline(prose))
+            case .code(let language, let code): .code(language: language, code: code)
+            case .table(let table): .table(table)
             }
         }
     }
@@ -1697,15 +1795,23 @@ private struct ToolCard: View {
             .map { String(decoding: $0, as: UTF8.self) } ?? arguments
     }
 
-    /// The command for bash, the path for file tools, otherwise the raw arguments.
+    /// The command for bash, the path for file tools, otherwise the raw arguments: its first line's start (arguments can
+    /// be a whole file).
     private var summary: String {
-        guard let data = arguments.data(using: .utf8),
-              let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any]
-        else { return arguments }
-        let value = object["command"] ?? object["path"] ?? object["file_path"] ?? object["url"] ?? object["ref"] ?? object["key"]
-            ?? object["action"]
-        return value.map { "\($0)" } ?? (object.isEmpty ? "" : arguments)
+        Self.summaries.value(for: arguments) {
+            let summary: String
+            if let data = arguments.data(using: .utf8), let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any] {
+                let value = object["command"] ?? object["path"] ?? object["file_path"] ?? object["url"] ?? object["ref"] ?? object["key"]
+                    ?? object["action"]
+                summary = value.map { "\($0)" } ?? (object.isEmpty ? "" : arguments)
+            } else {
+                summary = arguments
+            }
+            return String(summary.prefix(200))
+        }
     }
+
+    private static let summaries = RenderCache<String>(countLimit: 1000, costLimit: 16_000_000)
 }
 
 // MARK: - Models

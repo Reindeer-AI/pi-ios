@@ -45,7 +45,7 @@ import { contextUsage } from "./context.ts";
 import { VaultTools } from "./vault.ts";
 import { BASH_ENTRY, SYSTEM_PROMPT_ENTRY } from "./extensions/session.ts";
 import { installNativeFetch } from "./net.ts";
-import { type SessionMeta, SessionsDoc, createSession, submissionReply, transcriptOf } from "./sessions.ts";
+import { type SessionMeta, SessionsDoc, createSession, submissionReply, type TranscriptItem, transcriptOf } from "./sessions.ts";
 import { NativeSqliteDatabase } from "./storage.ts";
 
 const context = BACKGROUND_CONTEXT;
@@ -479,15 +479,67 @@ onCommand(
 	},
 );
 
-onCommand("session.transcript", async ({ id }: { id: number }) => {
+/** How many rows the app loads at a time: the latest when a session opens, then as many earlier ones each time the reader
+ * scrolls to the top. A session can run to tens of millions of tokens; its whole transcript would be too much to send and
+ * to hold. */
+const TRANSCRIPT_PAGE = 150;
+
+/**
+ * Where the next earlier page of a transcript ends: within the context's rows (`context`: the first one shown), or among
+ * the entries before the context (`before`: an entry ID). After a compaction the context starts with its summary, a newer
+ * entry than the ones it kept that follow it, so the rows aren't in ID order and a page can't just be "before the first".
+ */
+type TranscriptCursor = { context?: number; before?: number };
+
+/**
+ * A session's transcript, a page at a time: without `earlier` its latest rows, with it the rows before that. `earlier` in
+ * the result is where the next page ends (null at the start). What came before a compaction shows too, after the rows of
+ * the context (which starts at the compaction's summary, the entries it kept following).
+ */
+onCommand("session.transcript", async ({ id, limit, earlier }: { id: number; limit?: number; earlier?: TranscriptCursor }) => {
+	const count = Math.max(1, Math.min(limit ?? TRANSCRIPT_PAGE, 2000));
 	const stream = await watchEvents(requireEngine().harness, id as ConversationId, context);
 	const { entries, run } = stream.snapshot;
 	await stream.stop();
-	// After a compaction the context starts at its summary (the entries it kept follow): what came before shows too.
-	const start = (entries[0] as { head?: number } | undefined)?.head;
-	const earlier = start === undefined ? [] : await entriesBefore(id, start);
-	return { items: [...transcriptOf(earlier), ...transcriptOf(entries)], running: run !== undefined };
+	const running = run !== undefined;
+	if (earlier?.before !== undefined) return { ...(await transcriptBefore(id, earlier.before, count)), running };
+	const rows = transcriptOf(entries);
+	const end = Math.min(earlier?.context ?? rows.length, rows.length);
+	const start = toCall(rows, Math.max(0, end - count));
+	const items = rows.slice(start, end);
+	if (start > 0) return { items, earlier: { context: start }, running };
+	// The context's first rows: what came before it fills the page.
+	const head = (entries[0] as { head?: number } | undefined)?.head;
+	if (head === undefined) return { items, earlier: null, running };
+	if (items.length >= count) return { items, earlier: { before: head }, running };
+	const before = await transcriptBefore(id, head, count - items.length);
+	return { items: [...before.items, ...items], earlier: before.earlier, running };
 });
+
+/** A page's start, moved back over tool results to the assistant message with their calls (a tool row shows its call). */
+function toCall(rows: readonly TranscriptItem[], start: number): number {
+	while (start > 0 && rows[start]?.kind === "tool") start--;
+	return start;
+}
+
+/** The last `count` rows of the entries before `before`, read newest first a page at a time, and where the next page ends. */
+async function transcriptBefore(id: number, before: number, count: number): Promise<{ items: TranscriptItem[]; earlier: TranscriptCursor | null }> {
+	const conversation = await requireConversation(id);
+	const newestFirst: EntryRecord[] = [];
+	let cursor: Cursor | undefined;
+	let rows: TranscriptItem[] = [];
+	do {
+		const page = await conversation.entries({ maxEntryId: (before - 1) as EntryId, order: "descending" }, 200, cursor, context);
+		newestFirst.push(...page.items);
+		cursor = page.next;
+		rows = transcriptOf([...newestFirst].reverse());
+		// Enough rows, and the page doesn't start with a tool result whose call is earlier.
+	} while (cursor && (rows.length < count || rows[rows.length - count]?.kind === "tool"));
+	const start = toCall(rows, Math.max(0, rows.length - count));
+	const items = rows.slice(start);
+	const more = start > 0 || cursor !== undefined;
+	return { items, earlier: more && items[0] ? { before: items[0].entryId } : more ? { before } : null };
+}
 
 /** A session's entries before `before`, in order (the history a compaction took out of the context). */
 async function entriesBefore(id: number, before: number): Promise<EntryRecord[]> {

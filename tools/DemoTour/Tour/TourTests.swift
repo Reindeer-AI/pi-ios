@@ -2991,6 +2991,87 @@ final class TourTests: XCTestCase {
         XCTAssertFalse(text("B7").exists, "gone from the Dynamic Island")
     }
 
+    /// Typing in a very long session stays quick: SHARED_FILE is floodtest.piext (Fixtures/floodtest.ts), whose /flood
+    /// fills a session with thousands of messages. Times typing a sentence in the message box (XCUITest waits for the
+    /// app between keystrokes, so slow keystrokes show), in the session as it filled and after a relaunch (its whole
+    /// transcript loaded), and prints the times. FLOOD_COUNT sets how many (default 3000).
+    func testLongSessionTyping() throws {
+        executionTimeAllowance = 30 * 60
+        let path = try XCTUnwrap(ProcessInfo.processInfo.environment["SHARED_FILE"], "the test extension's .piext")
+        let count = Int(ProcessInfo.processInfo.environment["FLOOD_COUNT"] ?? "") ?? 3000
+        pi.launchArguments += ["-openSharedFile", path]
+        launchReady()
+        tap(pi.buttons["Add to Every Session"].firstMatch)
+        pause(2)
+        if pi.buttons["Done"].exists { pi.buttons["Done"].firstMatch.tap() }
+        let message = pi.textFields["Message pi"]
+        tap(pi.buttons["New session"].firstMatch)
+        pause(1.5)
+        tap(message)
+        message.typeText("/flood \(count)")
+        tap(pi.buttons["Send"].firstMatch)
+        let flooded = pi.staticTexts.matching(NSPredicate(format: "label BEGINSWITH %@", "flooded")).firstMatch
+        XCTAssertTrue(flooded.waitForExistence(timeout: 5 * 60), "the extension sent them")
+        // They arrive after the notice: until the last one is in the transcript.
+        let last = pi.staticTexts.matching(NSPredicate(format: "label CONTAINS %@", "Entry \(count - 1)\n")).firstMatch
+        XCTAssertTrue(last.waitForExistence(timeout: 20 * 60), "the last message arrived")
+        pause(5)
+        let sentence = "The quick brown fox jumps over the lazy dog 0123456789"
+        func timeTyping(_ label: String) {
+            tap(message)
+            pause(1)
+            let start = Date()
+            message.typeText(sentence)
+            let seconds = Date().timeIntervalSince(start)
+            print("typing \(label): \(String(format: "%.2f", seconds)) s for \(sentence.count) characters")
+            // With text in it, the box no longer goes by its placeholder.
+            pi.textFields.firstMatch.typeText(String(repeating: XCUIKeyboardKey.delete.rawValue, count: sentence.count))
+        }
+        timeTyping("as it filled")
+        pi.terminate()
+        pause(2)
+        launchReady()
+        backToSessions()
+        tap(pi.buttons.matching(NSPredicate(format: "label BEGINSWITH %@", "Flood test")).firstMatch)
+        XCTAssertTrue(message.waitForExistence(timeout: 60), "the session, opened again")
+        pause(5)
+        timeTyping("after a relaunch")
+        // pi's own CPU time for typing the sentence and deleting it (the clock time is mostly the test's).
+        let options = XCTMeasureOptions()
+        options.iterationCount = 3
+        measure(metrics: [XCTCPUMetric(application: pi), XCTClockMetric()], options: options) {
+            pi.textFields.firstMatch.typeText(sentence)
+            pi.textFields.firstMatch.typeText(String(repeating: XCUIKeyboardKey.delete.rawValue, count: sentence.count))
+        }
+
+        // Only its latest rows loaded (150): at their top (a tap on the status bar), Earlier messages loads the page before,
+        // with the row that was first staying at the top; scrolling up shows the earlier rows.
+        if pi.buttons["Hide keyboard"].exists { pi.buttons["Hide keyboard"].tap() }
+        func shownEntries() -> [Int] {
+            pi.staticTexts.allElementsBoundByIndex.compactMap { element in
+                element.label.firstMatch(of: /^Entry (\d+)\n/).flatMap { Int($0.1) }
+            }
+        }
+        pi.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0)).withOffset(CGVector(dx: 0, dy: 12)).tap()
+        let more = pi.buttons.matching(NSPredicate(format: "label BEGINSWITH %@", "Earlier messages")).firstMatch
+        XCTAssertTrue(more.waitForExistence(timeout: 10), "more to load, at the top")
+        pause(1)
+        let top = shownEntries().min() ?? 0
+        print("at the top: rows from \(top)")
+        XCTAssertEqual(top, count - 150, "the latest 150 rows")
+        // The row that was first, still on screen (the lazy stack estimates the new rows' heights, so it lands within a
+        // row of where it was; and it lays out a few rows above the screen, so the lowest number shown isn't the top one).
+        let firstRow = pi.staticTexts.matching(NSPredicate(format: "label BEGINSWITH %@", "Entry \(top)\n")).firstMatch
+        let before = firstRow.frame.minY
+        more.tap()
+        pause(2)
+        print("after Earlier messages: rows from \(shownEntries().min() ?? 0); the first row moved \(Int(firstRow.frame.minY - before)) points")
+        XCTAssertTrue(firstRow.isHittable, "the row that was first, still on screen")
+        pi.swipeDown()
+        pause(1)
+        XCTAssertLessThan(shownEntries().min() ?? top, top, "the earlier rows, above")
+    }
+
     /// Adds pi's widget to the Home Screen from the widget gallery (Edit → Add Widget → pi).
     private func addPiWidget(_ springboard: XCUIApplication) {
         func dump(_ what: String) { print("SPRINGBOARD (\(what)):\n\(springboard.debugDescription)") }

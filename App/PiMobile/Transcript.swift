@@ -34,6 +34,11 @@ enum TranscriptItem: Identifiable, Equatable {
         return text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? nil : text
     }
 
+    /// A tool row's call.
+    var toolCallId: String? {
+        if case .tool(_, let toolCallId, _, _, _) = self { toolCallId } else { nil }
+    }
+
     var id: Int {
         switch self {
         case .user(let id, _), .assistant(let id, _, _, _, _), .tool(let id, _, _, _, _), .custom(let id, _, _), .bash(let id, _, _, _),
