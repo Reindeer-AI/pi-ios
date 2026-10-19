@@ -15,6 +15,11 @@
 #                                                               share with the app (no --widgets-profile; the app's
 #                                                               profile needs no App Group)
 #
+# Sessions sync between the user's devices through iCloud when the app's profile grants its iCloud container
+# (iCloud.<bundle ID>, with CloudKit; PI_SYNC=1 asks for it with Xcode's own signing, PI_SYNC=0 leaves it out): the app
+# is then signed with it and told its name (PI_SYNC_CONTAINER), in iCloud's PI_CLOUDKIT_ENVIRONMENT (default
+# Production; Development for builds that shouldn't need the schema deployed). Without it, the app works as before.
+#
 # PI_TEAM is the Apple developer team that signs it; PI_VERSION its version (default 0.1.<commit count>; an MDM needs
 # it higher on every upload), PI_BUILD its build number (default PI_VERSION; App Store Connect needs it higher on every
 # upload of a version), and PI_BUNDLE_ID its bundle identifier (default dev.pimobile.PiMobile). Ad hoc and development builds install only on iPhones registered to the
@@ -69,6 +74,17 @@ grants_group() {
 entitlements = plistlib.loads(sys.stdin.buffer.read()).get("Entitlements", {})
 sys.exit(0 if sys.argv[1] in entitlements.get("com.apple.security.application-groups", []) else 1)' "$APP_GROUP" <<<"$1"
 }
+# The iCloud container sessions sync through (SessionSync.swift), when the app's profile grants it.
+SYNC_CONTAINER="iCloud.$BUNDLE_ID"
+grants_container() {
+	python3 -c 'import plistlib, sys
+entitlements = plistlib.loads(sys.stdin.buffer.read()).get("Entitlements", {})
+containers = entitlements.get("com.apple.developer.icloud-container-identifiers", [])
+services = entitlements.get("com.apple.developer.icloud-services", [])
+sys.exit(0 if (sys.argv[1] in containers or "*" in containers) and ("CloudKit" in services or "*" in services) else 1)' "$SYNC_CONTAINER" <<<"$1"
+}
+SYNC=""
+if [[ "${PI_SYNC:-}" == 1 ]]; then SYNC=1; fi
 SIGNING=()
 UPDATES=(-allowProvisioningUpdates)
 if [[ -n "$PROFILE" ]]; then
@@ -114,6 +130,15 @@ if [[ -n "$PROFILE" ]]; then
 	fi
 	UPDATES=()
 	echo "Signing with \"$PROFILE_NAME\" ($METHOD, $IDENTITY)"
+	if [[ "${PI_SYNC:-}" == 0 ]]; then
+		SYNC=""
+		echo "Sessions don't sync in this build (PI_SYNC=0)"
+	elif grants_container "$DECODED"; then
+		SYNC=1
+	else
+		SYNC=""
+		echo "Sessions don't sync in this build: \"$PROFILE_NAME\" doesn't grant the iCloud container $SYNC_CONTAINER (with CloudKit)"
+	fi
 fi
 BUILD="$ROOT/App/build/ipa"
 DIST="$ROOT/dist"
@@ -132,16 +157,24 @@ mkdir -p "$BUILD" "$DIST"
 
 # Without the Watch app or the widgets: archived from a copy of the project whose app target neither depends on them
 # nor embeds them (Xcode can't leave a dependency out by a setting, and checks anything it embeds is signed like the
-# app); without the widgets, the app is signed without their App Group too.
+# app); without the widgets, the app is signed without their App Group too. With sync, it's signed with the iCloud
+# container (from a copy too: the entitlements are the app target's own).
 PROJECT="$ROOT/App/PiMobile.xcodeproj"
-if [[ -z "$WATCH" || -z "$WIDGETS" ]]; then
+SYNC_SETTINGS=()
+if [[ -z "$WATCH" || -z "$WIDGETS" || -n "$SYNC" ]]; then
 	PROJECT="$ROOT/App/PiMobile-trimmed.xcodeproj"
 	rm -rf "$PROJECT"
 	cp -R "$ROOT/App/PiMobile.xcodeproj" "$PROJECT"
 	trap 'rm -rf "$ROOT/App/PiMobile-trimmed.xcodeproj"' EXIT
+	cp "$ROOT/App/PiMobile.entitlements" "$ROOT/App/build/PiMobile-built.entitlements"
 	if [[ -z "$WIDGETS" ]]; then
-		cp "$ROOT/App/PiMobile.entitlements" "$ROOT/App/build/PiMobile-no-widgets.entitlements"
-		plutil -remove "com\.apple\.security\.application-groups" "$ROOT/App/build/PiMobile-no-widgets.entitlements"
+		plutil -remove "com\.apple\.security\.application-groups" "$ROOT/App/build/PiMobile-built.entitlements"
+	fi
+	if [[ -n "$SYNC" ]]; then
+		plutil -insert "com\.apple\.developer\.icloud-container-identifiers" -json "[\"$SYNC_CONTAINER\"]" "$ROOT/App/build/PiMobile-built.entitlements"
+		plutil -insert "com\.apple\.developer\.icloud-services" -json '["CloudKit"]' "$ROOT/App/build/PiMobile-built.entitlements"
+		SYNC_SETTINGS=(PI_SYNC_CONTAINER="$SYNC_CONTAINER")
+		echo "Sessions sync through $SYNC_CONTAINER"
 	fi
 	python3 - "$PROJECT/project.pbxproj" "$WATCH" "$WIDGETS" <<'UNHOOK'
 import re
@@ -168,10 +201,10 @@ if not watch:
     unhook("PiWatch", "Embed Watch Content", "--no-watch")
 if not widgets:
     unhook("PiWidgets", "Embed Widgets", "--no-widgets")
-    entitlements = "CODE_SIGN_ENTITLEMENTS = PiMobile.entitlements;"
-    if text.count(entitlements) != 2:
-        sys.exit("error: --no-widgets can't find the app's entitlements in the project")
-    text = text.replace(entitlements, 'CODE_SIGN_ENTITLEMENTS = "build/PiMobile-no-widgets.entitlements";')
+entitlements = "CODE_SIGN_ENTITLEMENTS = PiMobile.entitlements;"
+if text.count(entitlements) != 2:
+    sys.exit("error: can't find the app's entitlements in the project")
+text = text.replace(entitlements, 'CODE_SIGN_ENTITLEMENTS = "build/PiMobile-built.entitlements";')
 open(path, "w").write(text)
 UNHOOK
 fi
@@ -181,7 +214,7 @@ xcodebuild archive \
 	-archivePath "$BUILD/PiMobile.xcarchive" -derivedDataPath "$BUILD/DerivedData" \
 	${UPDATES[@]+"${UPDATES[@]}"} \
 	DEVELOPMENT_TEAM="$TEAM" MARKETING_VERSION="$VERSION" CURRENT_PROJECT_VERSION="$BUILD_NUMBER" \
-	PI_BUNDLE_ID="$BUNDLE_ID" \
+	PI_BUNDLE_ID="$BUNDLE_ID" ${SYNC_SETTINGS[@]+"${SYNC_SETTINGS[@]}"} \
 	SWIFT_ACTIVE_COMPILATION_CONDITIONS="$CONDITIONS" ${SIGNING[@]+"${SIGNING[@]}"}
 ARCHIVED="$BUILD/PiMobile.xcarchive/Products/Applications/PiMobile.app"
 if [[ -z "$WATCH" && -d "$ARCHIVED/Watch" ]]; then
@@ -194,6 +227,10 @@ if [[ -z "$WIDGETS" && -d "$ARCHIVED/PlugIns/PiWidgets.appex" ]]; then
 fi
 if [[ -n "$WIDGETS" && ! -d "$ARCHIVED/PlugIns/PiWidgets.appex" ]]; then
 	echo "error: the archived app has no widgets (PlugIns/PiWidgets.appex)" >&2
+	exit 1
+fi
+if [[ -n "$SYNC" && "$(plutil -extract PiSyncContainer raw -o - "$ARCHIVED/Info.plist" 2>/dev/null)" != "$SYNC_CONTAINER" ]]; then
+	echo "error: the archived app doesn't name its iCloud container (PiSyncContainer in App/Info.plist)" >&2
 	exit 1
 fi
 
@@ -231,6 +268,11 @@ else cat <<SIGNING
 	<key>signingStyle</key>
 	<string>automatic</string>
 SIGNING
+fi)
+$(if [[ -n "$SYNC" ]]; then cat <<ICLOUD
+	<key>iCloudContainerEnvironment</key>
+	<string>${PI_CLOUDKIT_ENVIRONMENT:-Production}</string>
+ICLOUD
 fi)
 $(if [[ "$METHOD" == app-store-connect ]]; then cat <<STORE
 	<key>uploadSymbols</key>

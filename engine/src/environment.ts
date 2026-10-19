@@ -48,7 +48,7 @@ const GUIDES = {
 - Real Node, npm, compilers, Docker, and test suites run on a Linux machine through Crabbox (crabbox topic).
 - Tests: Python's unittest and doctest work; JavaScript test runners (jest, vitest) need Node and do not.`,
 
-	ui: `- Your replies are Markdown in a chat on a phone screen (about 390 points wide): short paragraphs, small tables, code blocks.
+	ui: `- Your replies are Markdown in a chat on the device's screen (on an iPhone about 390 points wide): short paragraphs, small tables, code blocks.
 - show_html puts an interactive card in the chat (see the panels section).
 - Extensions can ask the user through native dialogs (ctx.ui.select, confirm, input, editor), notify, show status lines and widgets above the message box, and show pi-tui components or HTML pages in panels.
 - Extensions' apps (pi.registerApp) are pages the user keeps in a session's dock. Any app can go on the Home Screen or Lock Screen as a widget its extension draws with native views; tapping it opens just that app, full screen, and its buttons can run the extension's code without opening pi. Extensions can also show something in progress as a Live Activity, on the Lock Screen and in the Dynamic Island (widgets topic).
@@ -86,6 +86,23 @@ const GUIDES = {
 } as const;
 
 type Topic = keyof typeof GUIDES;
+
+/** The device pi runs on, and whether its sessions sync with the user's other devices (the app says, `replica.device`). */
+let device: { kind: string; name: string; sync: boolean } = { kind: "iPhone", name: "iPhone", sync: false };
+
+export function setDevice(value: { kind?: string; name?: string; sync?: boolean }): void {
+	device = { kind: value.kind || device.kind, name: value.name || device.name, sync: value.sync ?? device.sync };
+}
+
+/** Who and where the agent is: on a Mac, the iPhone app with the phone's environment, not the Mac's own. */
+function whereabouts(): string {
+	const sync = device.sync
+		? "\n- Sessions sync across the user's devices, and one device has a session at a time: when the user continues a session on another device, its history and workspace files go with it, and a note in the conversation says where it moved."
+		: "";
+	return device.kind === "Mac"
+		? `You are pi, a coding agent running inside the pi app on the user's Mac: the iPhone and iPad app, running on the Mac with the same environment as on the phone, not the Mac's own shell or files. Everything runs in the app: your shell, files, Python, and the extensions you write.${sync}`
+		: `You are pi, a coding agent running inside an app on the user's ${device.kind === "iPad" ? "iPad" : "iPhone"}, not on a computer. Everything runs on the device: your shell, files, Python, and the extensions you write.${sync}`;
+}
 const TOPICS = Object.keys(GUIDES) as Topic[];
 
 /**
@@ -98,7 +115,7 @@ export function environmentGuide(browserTools: readonly string[]) {
 		sections: [
 			section(
 				"environment",
-				(input) => `You are pi, a coding agent running inside an app on the user's iPhone or iPad, not on a computer. Everything runs on the device: your shell, files, Python, and the extensions you write.
+				(input) => `${whereabouts()}
 - Workspace: ${input.env?.cwd ?? "this session's folder"} is this session's own folder (cwd and HOME). The user cannot browse it, so show results in your replies or with show_html.
 - Attachments: a line "attachment:<path>" in the user's message is a file they attached, saved at that path in the workspace.
 - Shell (the bash tool): dash, a POSIX sh, not bash (no [[ ]] or arrays); common Unix tools, curl, git (libgit2's lg2), python3 and pip (pure-Python packages only). There is no node, npm, compiler, package manager, or sudo, and nothing native can be installed. Commands from every session share one shell, one at a time: keep them short and give the bash tool a timeout for anything that could hang.

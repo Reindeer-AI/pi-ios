@@ -42,6 +42,8 @@
 	<string>pi transcribes spoken prompts and recordings from your Apple Watch, on this device when it can. Apple may process audio when on-device recognition is unavailable.</string>
 	<key>NSSupportsLiveActivities</key>
 	<true/>
+	<key>PiSyncContainer</key>
+	<string>$(PI_SYNC_CONTAINER)</string>
 	<key>PIGitHubClientID</key>
 	<string>Ov23li02wDGlvGDHXiqN</string>
 	<key>UIBackgroundModes</key>

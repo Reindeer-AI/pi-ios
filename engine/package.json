@@ -5,7 +5,7 @@
   "scripts": {
     "build": "node build.mjs",
     "typecheck": "tsc --noEmit",
-    "test": "esbuild src/sessions.ts --bundle --platform=node --format=esm --packages=external --outfile=dist/session-tests.mjs && node --test test/sessions.mjs"
+    "test": "esbuild src/sessions.ts --bundle --platform=node --format=esm --packages=external --outfile=dist/session-tests.mjs && esbuild src/replica.ts --bundle --platform=node --format=esm --packages=external --outfile=dist/replica-tests.mjs && node --test test/sessions.mjs test/replica.mjs"
   },
   "dependencies": {
     "@earendil-works/chord": "1.1.0",

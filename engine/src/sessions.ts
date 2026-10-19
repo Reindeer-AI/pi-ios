@@ -15,6 +15,10 @@ export type SessionMeta = {
 	browser?: string | null;
 	/** How much its model thinks (pi's levels, off to max, as the model takes them); sessions from before have none: off. */
 	thinkingLevel?: string;
+	/** The session on every device it syncs to (`replica.ts`); none until it first syncs. */
+	syncId?: string;
+	/** The device that has the session now, when another one does: here it's read-only until the user continues it here. */
+	heldBy?: string;
 };
 
 /** The session list, kept as a document on the root conversation so it is as durable as the transcripts. */

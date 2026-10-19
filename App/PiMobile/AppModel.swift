@@ -40,6 +40,10 @@ final class AppModel {
         var createdAt: Date
         /// When the user last sent it a message (its creation, for sessions from before this was kept).
         var lastActive: Date
+        /// The session on the user's other devices (`SessionSync`), once it synced.
+        var syncId: String?
+        /// The device that has the session when another one does: here it's read-only until the user continues it here.
+        var heldBy: String?
         var items: [TranscriptItem] = []
         /// Each tool call's arguments by call (they live on the assistant message that made the call), for its tool row:
         /// kept as items come (`add`), as a long session has thousands of rows.
@@ -284,6 +288,8 @@ final class AppModel {
     }
 
     @ObservationIgnored lazy var watchCompanion = WatchCompanion(app: self, storage: storage)
+    /// Sessions on the user's other devices, through iCloud.
+    let sync = SessionSync()
 
     private(set) var phase: Phase = .starting
     /// The app's model, for Shortcuts' actions (`Shortcuts.swift`).
@@ -634,6 +640,7 @@ final class AppModel {
                 "compaction": Self.compactionOverride(),
                 // After a frozen page (recoverFrozenEngine): what not to load or resume.
                 "recover": recovery.map { ["extensions": $0.extensions, "abort": $0.abort] as [String: Any] } ?? NSNull(),
+                "device": sync.deviceInfo,
             ]) as? [String: Any] ?? [:]
             // A session listed twice keeps its first entry rather than ending the app (uniqueKeysWithValues traps).
             let previous = Dictionary(sessions.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
@@ -644,6 +651,8 @@ final class AppModel {
                 session.title = meta.title
                 session.model = meta.model
                 session.browser = meta.browser
+                session.syncId = meta.syncId
+                session.heldBy = meta.heldBy
                 session.loaded = false
                 return session
             }.sorted { $0.createdAt > $1.createdAt }
@@ -659,6 +668,7 @@ final class AppModel {
             preload()
             // The store opened with the network models of the last launch; the endpoint's current list follows.
             Task { await refreshNetworkModels() }
+            sync.start(self, storage: storage)
         } catch {
             fail(error.localizedDescription)
         }
@@ -1231,6 +1241,8 @@ final class AppModel {
             ]
             if let browser = session.browser { meta["browser"] = browser }
             if session.thinkingLevel != "off" { meta["thinkingLevel"] = session.thinkingLevel }
+            if let syncId = session.syncId { meta["syncId"] = syncId }
+            if let heldBy = session.heldBy { meta["heldBy"] = heldBy }
             if let subtitle = providers.isEmpty ? savedSubtitles[session.id] : subtitle(of: session) { meta["subtitle"] = subtitle }
             return meta
         }
@@ -1808,7 +1820,9 @@ final class AppModel {
         _ = try? await engine.command("session.rename", ["id": id, "title": title])
     }
 
-    func delete(_ id: Int) async {
+    /// Deletes a session and its workspace; `everywhere`: on the user's other devices too (not when one of them deleted it).
+    func delete(_ id: Int, everywhere: Bool = true) async {
+        if everywhere { sync.deleted(syncId: session(id)?.syncId) }
         _ = try? await engine.command("session.delete", ["id": id])
         sessions.removeAll { $0.id == id }
         saveSessionList()
@@ -1835,6 +1849,10 @@ final class AppModel {
         sessions.firstIndex { $0.id == id }
     }
 
+    func session(_ id: Int) -> Session? {
+        sessions.first { $0.id == id }
+    }
+
     private static func session(from meta: [String: Any]) -> Session? {
         guard let id = meta["id"] as? Int else { return nil }
         let model = meta["model"] as? [String: Any] ?? [:]
@@ -1845,7 +1863,9 @@ final class AppModel {
             thinkingLevel: meta["thinkingLevel"] as? String ?? "off",
             browser: meta["browser"] as? String,
             createdAt: Date(timeIntervalSince1970: (meta["createdAt"] as? Double ?? 0) / 1000),
-            lastActive: Date(timeIntervalSince1970: (meta["lastActiveAt"] as? Double ?? meta["createdAt"] as? Double ?? 0) / 1000)
+            lastActive: Date(timeIntervalSince1970: (meta["lastActiveAt"] as? Double ?? meta["createdAt"] as? Double ?? 0) / 1000),
+            syncId: meta["syncId"] as? String,
+            heldBy: meta["heldBy"] as? String
         )
     }
 
@@ -2051,11 +2071,16 @@ final class AppModel {
         case "session_updated":
             let meta = event["session"] as? [String: Any] ?? [:]
             if let updated = Self.session(from: meta), let index = index(of: updated.id) {
+                // A new title or model goes to the user's other devices.
+                let changed = sessions[index].title != updated.title || sessions[index].model != updated.model
                 sessions[index].title = updated.title
                 sessions[index].model = updated.model
                 sessions[index].browser = updated.browser
                 sessions[index].lastActive = updated.lastActive
+                sessions[index].syncId = updated.syncId
+                sessions[index].heldBy = updated.heldBy
                 saveSessionList()
+                if changed { sync.changed(updated.id) }
             }
         case "auth_prompt", "auth_prompt_closed", "auth_event", "auth_done", "auth_failed":
             handleAuth(event)
@@ -2069,11 +2094,13 @@ final class AppModel {
         case "run_start":
             sessions[index].running = true
             updateBackground()
+            sync.runStarted(sessions[index].id)
         case "run_end":
             sessions[index].running = false
             sessions[index].tools = []
             updateBackground()
             let id = sessions[index].id
+            sync.changed(id)
             Task { await refreshContext(id) }
         case "compaction_start":
             sessions[index].compacting = true
@@ -2095,7 +2122,10 @@ final class AppModel {
             if case .assistant = item { sessions[index].draft = nil }
             // An entry comes once with message_end and again as entry_appended, just after: the transcript's end is
             // where it would be (a long session has thousands of items).
-            if !sessions[index].items.suffix(16).contains(where: { $0.id == item.id }) { sessions[index].add(item) }
+            if !sessions[index].items.suffix(16).contains(where: { $0.id == item.id }) {
+                sessions[index].add(item)
+                sync.changed(sessions[index].id)
+            }
             // A queued message the agent took: in the transcript now (by its text at once, then as the engine says).
             if case .user(_, let text) = item, !sessions[index].queued.isEmpty {
                 if let taken = sessions[index].queued.firstIndex(where: { $0.text == text }) { sessions[index].queued.remove(at: taken) }
@@ -2242,6 +2272,8 @@ final class AppModel {
         }
         if state == "active" {
             endBackgroundTask()
+            // Other devices' changes since pi was last in front.
+            sync.kick()
             // What background checks wanted to ask while pi couldn't.
             Task { await ExtensionPermissions.shared.askPending() }
         }

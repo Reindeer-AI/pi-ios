@@ -3129,6 +3129,137 @@ final class TourTests: XCTestCase {
         }
     }
 
+    // MARK: - Session sync (two simulators, SYNC_FOLDER standing in for iCloud; scripts/test-session-sync.sh runs the steps)
+
+    /// pi as one of the user's devices, syncing through SYNC_FOLDER.
+    private func launchSyncing(as device: String) throws {
+        let folder = try XCTUnwrap(ProcessInfo.processInfo.environment["SYNC_FOLDER"], "SYNC_FOLDER")
+        pi.launchArguments += ["-syncFolder", folder, "-syncDeviceName", device, "-syncInterval", "3", "-setDefaultModel", "network:sync-test"]
+        launchReady()
+    }
+
+    private func element(containing text: String) -> XCUIElement {
+        pi.descendants(matching: .any).matching(NSPredicate(format: "label CONTAINS %@", text)).firstMatch
+    }
+
+    private func waitAllSynced(_ what: String) {
+        let synced = pi.staticTexts.matching(NSPredicate(format: "label BEGINSWITH %@", "All synced")).firstMatch
+        let found = synced.waitForExistence(timeout: 45)
+        if !found { print("SCREEN:\n\(pi.debugDescription)") }
+        XCTAssertTrue(found, what)
+    }
+
+    private func run(_ command: String) {
+        let message = pi.textFields["Message pi"]
+        tap(message)
+        message.typeText(command)
+        tap(pi.buttons["Send"].firstMatch)
+        let hide = pi.buttons["Hide keyboard"].firstMatch
+        if hide.waitForExistence(timeout: 2) { hide.tap() }
+    }
+
+    /// Step 1, on the "iPhone": a session writes a file, and syncs.
+    func testSyncSend() throws {
+        try launchSyncing(as: "iPhone")
+        tap(pi.buttons["New session"].firstMatch)
+        pause(1)
+        run("!echo synced from the iPhone > note.txt")
+        XCTAssertTrue(element(containing: "synced from the iPhone").waitForExistence(timeout: 15), "the command ran")
+        backToSessions()
+        waitAllSynced("the session is in iCloud")
+    }
+
+    /// Step 2, on the "Mac": the iPhone's session is here, read-only; Continue Here makes it the Mac's, the agent reads
+    /// that it moved, its file is in the workspace, and what the Mac does syncs back.
+    func testSyncContinue() throws {
+        try launchSyncing(as: "Mac")
+        let row = element(containing: "On iPhone")
+        if !row.waitForExistence(timeout: 45) { print("SCREEN:\n\(pi.debugDescription)") }
+        XCTAssertTrue(row.exists, "the iPhone's session came")
+        row.tap()
+        pause(1)
+        XCTAssertTrue(element(containing: "synced from the iPhone").waitForExistence(timeout: 15), "its history came")
+        XCTAssertFalse(pi.textFields["Message pi"].exists, "read-only while the iPhone has it")
+        tap(pi.buttons["continueHere"])
+        XCTAssertTrue(pi.textFields["Message pi"].waitForExistence(timeout: 20), "the Mac's now")
+        XCTAssertTrue(element(containing: "Moved from iPhone to Mac").waitForExistence(timeout: 10), "the agent's note that it moved")
+        run("!cat note.txt > seen.txt; echo continued on the Mac >> seen.txt")
+        XCTAssertTrue(element(containing: "continued on the Mac").waitForExistence(timeout: 15), "the command ran")
+        backToSessions()
+        waitAllSynced("what the Mac did is in iCloud")
+    }
+
+    /// Step 3, on the "iPhone": the session is the Mac's now, with what the Mac did.
+    func testSyncBack() throws {
+        try launchSyncing(as: "iPhone")
+        let row = element(containing: "On Mac")
+        if !row.waitForExistence(timeout: 45) { print("SCREEN:\n\(pi.debugDescription)") }
+        XCTAssertTrue(row.exists, "the session is the Mac's")
+        row.tap()
+        pause(1)
+        XCTAssertTrue(element(containing: "continued on the Mac").waitForExistence(timeout: 15), "the Mac's command came")
+        XCTAssertTrue(element(containing: "Moved from iPhone to Mac").exists, "the note that it moved")
+        XCTAssertTrue(pi.buttons["continueHere"].exists, "read-only here")
+        XCTAssertFalse(pi.textFields["Message pi"].exists, "no message box")
+    }
+
+    /// Step 4, on the "iPhone", without sync (offline, as far as the session goes): it takes the session back first, then
+    /// adds to it with sync off.
+    func testSyncOffline() throws {
+        try launchSyncing(as: "iPhone")
+        let row = element(containing: "On Mac")
+        XCTAssertTrue(row.waitForExistence(timeout: 45), "the session is the Mac's")
+        row.tap()
+        tap(pi.buttons["continueHere"])
+        XCTAssertTrue(pi.textFields["Message pi"].waitForExistence(timeout: 20), "the iPhone's again")
+        backToSessions()
+        waitAllSynced("the iPhone has it, in iCloud")
+        pi.terminate()
+        pi.launchArguments += ["-syncSessions", "NO"]
+        launchReady()
+        // The session's row (not the search field's).
+        tap(pi.buttons.matching(NSPredicate(format: "label BEGINSWITH %@", "New session,")).firstMatch)
+        pause(1)
+        run("!echo written offline > offline.txt")
+        XCTAssertTrue(element(containing: "written offline").waitForExistence(timeout: 15), "the command ran")
+    }
+
+    /// Step 5, on the "Mac": it takes the session while the iPhone's offline work hasn't come, and adds its own.
+    func testSyncTakeOver() throws {
+        try launchSyncing(as: "Mac")
+        let row = element(containing: "On iPhone")
+        XCTAssertTrue(row.waitForExistence(timeout: 45), "the iPhone has it")
+        row.tap()
+        tap(pi.buttons["continueHere"])
+        XCTAssertTrue(pi.textFields["Message pi"].waitForExistence(timeout: 20), "the Mac's")
+        XCTAssertFalse(element(containing: "written offline").exists, "the iPhone's offline work isn't here")
+        run("!echo written on the Mac > mac.txt")
+        XCTAssertTrue(element(containing: "written on the Mac").waitForExistence(timeout: 15), "the command ran")
+        backToSessions()
+        waitAllSynced("the Mac's work is in iCloud")
+    }
+
+    /// Step 6, on the "iPhone", syncing again: the session is the Mac's, with the Mac's work; the iPhone's offline work
+    /// is in a session of its own, which syncs from the iPhone.
+    func testSyncSplit() throws {
+        try launchSyncing(as: "iPhone")
+        let kept = element(containing: "(iPhone)")
+        if !kept.waitForExistence(timeout: 45) { print("SCREEN:\n\(pi.debugDescription)") }
+        XCTAssertTrue(kept.exists, "the offline work's own session")
+        XCTAssertTrue(element(containing: "On Mac").exists, "the session, the Mac's")
+        waitAllSynced("both in iCloud")
+        kept.tap()
+        pause(1)
+        XCTAssertTrue(element(containing: "written offline").waitForExistence(timeout: 10), "the offline work")
+        XCTAssertFalse(element(containing: "written on the Mac").exists, "not the Mac's")
+        XCTAssertTrue(pi.textFields["Message pi"].exists, "the iPhone's")
+        backToSessions()
+        element(containing: "On Mac").tap()
+        pause(1)
+        XCTAssertTrue(element(containing: "written on the Mac").waitForExistence(timeout: 10), "the Mac's work")
+        XCTAssertFalse(element(containing: "written offline").exists, "not the offline work")
+    }
+
     private func launchReady() {
         pi.launch()
         let newSession = pi.buttons["New session"].firstMatch

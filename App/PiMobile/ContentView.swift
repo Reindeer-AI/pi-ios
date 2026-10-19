@@ -229,13 +229,14 @@ private struct SessionsView: View {
                         .submitLabel(.go)
                         .onSubmit(openAddress)
                 }
+                if app.sync.active { SyncSummaryRow(sync: app.sync) }
             }
             ForEach(app.sessions) { session in
                 NavigationLink(value: session.id) {
                     HStack(spacing: 10) {
                         VStack(alignment: .leading, spacing: 3) {
                             Text(session.title).font(.headline).lineLimit(1)
-                            Text("\(app.subtitle(of: session)) · \(session.lastActive, format: .relative(presentation: .named))")
+                            Text("\(session.heldBy.map { "On \($0) · " } ?? "")\(app.subtitle(of: session)) · \(session.lastActive, format: .relative(presentation: .named))")
                                 .font(.caption).foregroundStyle(.secondary).lineLimit(1)
                         }
                         Spacer()
@@ -249,6 +250,7 @@ private struct SessionsView: View {
                             .accessibilityLabel("Apps: \(running.map(\.title).joined(separator: ", "))")
                         }
                         if session.running { WorkingIndicator(label: nil) }
+                        SyncRowMark(status: app.sync.status(of: session))
                     }
                 }
             }
@@ -504,7 +506,13 @@ private struct SessionView: View {
             }
             .onChange(of: session?.tools.last?.output) { if following { proxy.scrollTo("bottom") } }
         }
-        .safeAreaInset(edge: .bottom) { composer }
+        .safeAreaInset(edge: .bottom) {
+            if let session, session.heldBy != nil {
+                ContinueHereBar(app: app, session: session)
+            } else {
+                composer
+            }
+        }
         // Inside the toolbar's view (an inspector outside it takes the session's toolbar away in a split view).
         .inspector(isPresented: Binding(get: { columnApp != nil }, set: { shown in
             if !shown, let panel = columnApp { app.minimize(panel) }
@@ -538,9 +546,13 @@ private struct SessionView: View {
             }
             ToolbarItem(placement: .topBarTrailing) {
                 Menu {
+                    if let session, let status = app.sync.status(of: session) {
+                        Label(status.text, systemImage: status.symbol)
+                    }
                     Button("Change model", systemImage: "cpu") { showingModels = true }
+                        .disabled(session?.heldBy != nil)
                     // How much the model thinks, from the levels it takes (none to choose for one that doesn't reason).
-                    if let session, app.thinkingLevels(of: session.model).count > 1 {
+                    if let session, session.heldBy == nil, app.thinkingLevels(of: session.model).count > 1 {
                         Picker(selection: Binding(
                             get: { session.thinkingLevel },
                             set: { level in Task { await app.setThinkingLevel(level, for: id) } }
@@ -568,6 +580,7 @@ private struct SessionView: View {
                         title = session?.title ?? ""
                         renaming = true
                     }
+                    .disabled(session?.heldBy != nil)
                     // The whole session as a file: its history, settings and workspace, to open on another phone.
                     Button("Share Session…", systemImage: "square.and.arrow.up") {
                         Task {
@@ -601,7 +614,7 @@ private struct SessionView: View {
         .onChange(of: session?.running) { _, running in
             if running == false { Task { await app.loadApps(id) } }
         }
-        .sheet(isPresented: $showingModels) {
+        .sheet(isPresented: Binding(get: { showingModels && session?.heldBy == nil }, set: { showingModels = $0 })) {
             ModelPicker(app: app, selection: session?.model) { model in
                 Task { await app.setModel(model, for: id) }
             }
@@ -1060,6 +1073,8 @@ private struct TranscriptRow: View, Equatable {
             HTMLCard(callId: toolCallId, title: page.title, html: page.html, prompt: prompt)
         case .tool(_, _, let toolName, let output, let isError):
             ToolCard(name: toolName, arguments: arguments, output: output, isError: isError, running: false)
+        case .custom(_, "pimobile.moved", let text):
+            MovedRow(text: text)
         case .custom(_, let customType, let text):
             VStack(alignment: .leading, spacing: 4) {
                 Label(customType, systemImage: "puzzlepiece.extension").font(.caption).foregroundStyle(.secondary)
@@ -1949,8 +1964,10 @@ private struct SettingsView: View {
                 } header: {
                     Text("iCloud")
                 } footer: {
-                    Text("Sign-ins, the network server, the default model, extensions and their secrets, MCP servers and the vault sync to your devices signed in to the same Apple Account, through iCloud Keychain (end-to-end encrypted). Changes from another device apply when pi starts; the newest change wins, and lists merge item by item. Sessions stay on each device.")
+                    Text("Sign-ins, the network server, the default model, extensions and their secrets, MCP servers and the vault sync to your devices signed in to the same Apple Account, through iCloud Keychain (end-to-end encrypted). Changes from another device apply when pi starts; the newest change wins, and lists merge item by item.")
                 }
+
+                if app.sync.supported { SyncSettingsSection(sync: app.sync) }
 
                 BrowsersSection(app: app)
 

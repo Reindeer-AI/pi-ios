@@ -29,7 +29,7 @@ import { CodingTools } from "./read.ts";
 import { loadDeviceId, NativeCredentialStore, runLogin } from "./auth.ts";
 import { browserTools } from "./browser.ts";
 import { CrabboxTools, crabboxAvailable, refreshCrabbox, releaseSessionLease } from "./crabbox.ts";
-import { environmentGuide } from "./environment.ts";
+import { environmentGuide, setDevice } from "./environment.ts";
 import { GitHubTools, githubLogin, refreshGitHub } from "./github.ts";
 import { cancelMcpSignIn, listMcp, mcpAuthorizationResponse, mcpExtension, onMcpExtensionChange, reconnectMcp, refreshMcp, resumeMcp, signedOutMcp, signInMcp } from "./mcp.ts";
 import { refreshSecrets } from "./secrets.ts";
@@ -47,6 +47,7 @@ import { BASH_ENTRY, SYSTEM_PROMPT_ENTRY } from "./extensions/session.ts";
 import { installNativeFetch } from "./net.ts";
 import { type SessionMeta, SessionsDoc, createSession, submissionReply, type TranscriptItem, transcriptOf } from "./sessions.ts";
 import { NativeSqliteDatabase } from "./storage.ts";
+import { appendWire, countOf, entriesAfter, hasEntriesAfter, idAt, ReplicaDoc, type Runs, type WireEntry, withIds } from "./replica.ts";
 
 const context = BACKGROUND_CONTEXT;
 const NEW_SESSION_TITLE = "New session";
@@ -121,6 +122,8 @@ type OpenParams = {
 	 * engine doesn't run again.
 	 */
 	recover?: { extensions?: string[]; abort?: number[] };
+	/** The device pi runs on, for the agent (`setDevice`), and whether its sessions sync. */
+	device?: { kind: string; name: string; sync: boolean };
 };
 
 /**
@@ -169,6 +172,7 @@ async function openStore(params: OpenParams) {
 	for (const provider of params.providers ?? []) setCustomProvider(models, customIds, provider);
 
 	const { sessionsRoot } = params;
+	if (params.device) setDevice(params.device);
 	// The app's own temporary directory (os.tmpdir() in extensions): an iPhone app can't write to /tmp.
 	const tmp: Record<string, string> = params.tmp ? { TMPDIR: params.tmp } : {};
 	if (params.cache) setTranspileCache(params.cache);
@@ -662,6 +666,308 @@ onCommand("session.importExtensions", async ({ id, extensions: records }: { id: 
 	requireEngine().extensions.adoptSessionExtensions(id, records ?? [], context),
 );
 
+// ---- Sessions on the user's other devices (replica.ts; the app's SessionSync moves them through iCloud) ----
+
+/** At most this many entries go in one `replica.export` (one chunk in iCloud). */
+const REPLICA_CHUNK = 1000;
+
+/** A session's details as they travel: listed before its entries arrive, and kept up to date on the other devices. */
+type ReplicaMeta = {
+	title: string;
+	model: { provider: string; modelId: string } | null;
+	thinkingLevel: string | null;
+	createdAt: number;
+	lastActiveAt: number | null;
+};
+/** A session's settings that travel: its agent's, its own extensions (loaded once a device takes it), its apps' records. */
+type ReplicaDocs = {
+	agent: { thinkingLevel: string | null; instructions: string | null } | null;
+	extensions: JsonValue | null;
+	apps: JsonValue | null;
+};
+
+/** Fails while another device has the session: it's read-only here until the user continues it here. */
+async function requireHeldHere(id: number): Promise<void> {
+	const heldBy = (await listSessions()).find((session) => session.id === id)?.heldBy;
+	if (heldBy) throw new Error(`This session is on ${heldBy} now. Tap Continue Here to continue it on this device.`);
+}
+
+async function replicaRuns(id: number): Promise<Runs> {
+	return ((await requireEngine().harness.snapshot(ReplicaDoc, id as ConversationId, context))?.runs ?? []) as Runs;
+}
+
+/**
+ * What the other devices don't have yet of a session this device has: its entries after theirs (`base` of them), at most
+ * a chunk (`more`: there are others after it), its details and settings; and its id across devices, given now if it had
+ * none. Once they're in iCloud, `replica.uploaded` records the entries as everyone's.
+ */
+onCommand("replica.export", async ({ id, limit }: { id: number; limit?: number }) => {
+	const { harness } = requireEngine();
+	const conversation = await requireConversation(id);
+	if (!(await listSessions()).find((session) => session.id === id)?.syncId) {
+		const syncId = crypto.randomUUID();
+		await updateSession(id, (session) => {
+			session.syncId ??= syncId;
+		});
+	}
+	const meta = (await listSessions()).find((session) => session.id === id);
+	if (!meta?.syncId) throw new Error(`No session ${id}`);
+	const runs = await replicaRuns(id);
+	const { entries, ids, more } = await entriesAfter(conversation, runs, Math.max(1, Math.min(limit ?? REPLICA_CHUNK, 5000)), context);
+	const agent = (await harness.snapshot(AgentDoc, id as ConversationId, context)) as { thinkingLevel?: string; instructions?: string } | undefined;
+	const extensions = await harness.snapshot(SessionExtensionsDoc, id as ConversationId, context);
+	const apps = await harness.snapshot(SessionAppsDoc, id as ConversationId, context);
+	const docs: ReplicaDocs = {
+		agent: { thinkingLevel: agent?.thinkingLevel ?? null, instructions: agent?.instructions ?? null },
+		extensions: (extensions ?? null) as JsonValue,
+		apps: (apps ?? null) as JsonValue,
+	};
+	const details: ReplicaMeta = {
+		title: meta.title,
+		model: meta.model,
+		thinkingLevel: meta.thinkingLevel ?? null,
+		createdAt: meta.createdAt,
+		lastActiveAt: meta.lastActiveAt ?? null,
+	};
+	return { syncId: meta.syncId, base: countOf(runs), entries, ids, more, meta: details, docs };
+});
+
+/** The entries `replica.export` gave are in iCloud: every device has them now. */
+onCommand("replica.uploaded", async ({ id, ids }: { id: number; ids: number[] }) => {
+	const conversation = await requireConversation(id);
+	const runs = await replicaRuns(id);
+	const last = idAt(runs, countOf(runs) - 1) ?? -1;
+	const next = withIds(runs, (ids ?? []).filter((entryId) => entryId > last));
+	await conversation.commit(async (tx) => {
+		(await tx.doc(ReplicaDoc, conversation.id)).runs = next;
+	}, context);
+	return { count: countOf(next) };
+});
+
+/**
+ * Another device's session, as far as iCloud has it: added here (readable, but read-only until the user continues it
+ * here: `heldBy`), or brought up to date with the entries after the `base` it had. `missing`: this device has fewer
+ * than `base` (send from there); `diverged`: it has entries no other device has (`replica.split` them off first).
+ */
+onCommand(
+	"replica.apply",
+	async ({
+		syncId,
+		base,
+		entries,
+		meta,
+		docs,
+		heldBy,
+		model: fallback,
+	}: {
+		syncId: string;
+		base: number;
+		entries: WireEntry[];
+		meta: ReplicaMeta;
+		docs: ReplicaDocs | null;
+		heldBy: string | null;
+		model?: { provider: string; modelId: string };
+	}) => {
+		const { harness, root, sessionsRoot, models, browser } = requireEngine();
+		const known = (model: ReplicaMeta["model"]) => (model && models.getModel(model.provider, model.modelId) ? model : undefined);
+		let session = (await listSessions()).find((candidate) => candidate.syncId === syncId);
+		let created = false;
+		if (!session) {
+			if (base !== 0) return { id: null, missing: 0 };
+			// Its model if this device has it, else the app's default.
+			const model = known(meta.model) ?? fallback ?? meta.model ?? undefined;
+			const conversation = await harness.createConversation({ ownership: { kind: "ownerless" }, agent: model ? { model } : {} }, context);
+			const directory = sessionDirectory(sessionsRoot, conversation.id);
+			await request("fs", "mkdir", { path: directory, recursive: true });
+			await conversation.configure({ cwd: directory, tools: { remove: browser.tools ?? [] } }, context);
+			const added: SessionMeta = {
+				id: conversation.id,
+				title: meta.title || NEW_SESSION_TITLE,
+				createdAt: meta.createdAt || Date.now(),
+				...(meta.lastActiveAt ? { lastActiveAt: meta.lastActiveAt } : {}),
+				model: model ? { provider: model.provider, modelId: model.modelId } : { provider: "", modelId: "" },
+				browser: null,
+				syncId,
+				...(heldBy ? { heldBy } : {}),
+			};
+			await root.commit(async (tx) => {
+				(await tx.doc(SessionsDoc, root.id)).sessions.push(added);
+			}, context);
+			await watch(conversation.id);
+			session = added;
+			created = true;
+		}
+		const id = session.id;
+		const conversation = await requireConversation(id);
+		const runs = await replicaRuns(id);
+		const count = countOf(runs);
+		if (count < base) return { id, missing: count };
+		if (await hasEntriesAfter(conversation, runs, context)) return { id, diverged: true, count };
+		const fresh = (entries ?? []).slice(count - base);
+		const total = await conversation.commit(async (tx) => {
+			const ids = await appendWire(tx, conversation.id, runs, fresh);
+			const next = withIds(runs, ids);
+			const replica = await tx.doc(ReplicaDoc, conversation.id);
+			replica.runs = next;
+			if (docs?.extensions) replica.extensions = JSON.parse(JSON.stringify(docs.extensions)) as JsonValue;
+			if (docs?.apps) {
+				const value = JSON.parse(JSON.stringify(docs.apps)) as { apps?: Record<string, JsonValue>; states?: Record<string, JsonValue> };
+				const apps = await tx.doc(SessionAppsDoc, conversation.id);
+				Object.assign(apps, { apps: value.apps ?? {}, states: value.states ?? {} });
+			}
+			return countOf(next);
+		}, context);
+		// Its settings, as the device that has it set them (the model only if this device has it).
+		const model = known(meta.model);
+		const agent = docs?.agent;
+		if (model || agent?.thinkingLevel || agent?.instructions) {
+			await conversation.configure(
+				{
+					...(model ? { model } : {}),
+					...(agent?.thinkingLevel ? { thinkingLevel: agent.thinkingLevel as ModelThinkingLevel } : {}),
+					...(agent?.instructions ? { instructions: agent.instructions } : {}),
+				},
+				context,
+			);
+		}
+		await updateSession(id, (target) => {
+			target.title = meta.title || target.title;
+			if (meta.lastActiveAt) target.lastActiveAt = meta.lastActiveAt;
+			if (model) target.model = { provider: model.provider, modelId: model.modelId };
+			if (meta.thinkingLevel) target.thinkingLevel = meta.thinkingLevel;
+			else delete target.thinkingLevel;
+			if (heldBy) target.heldBy = heldBy;
+			else delete target.heldBy;
+		});
+		if (created) emit({ type: "session_added", session: (await listSessions()).find((candidate) => candidate.id === id) });
+		return { id, count: total, created, added: fresh.length };
+	},
+);
+
+/**
+ * A session this device added to while another device had it (offline, say): what all devices share goes on as the
+ * session everyone syncs (a fork at the last entry they share, with a copy of the files), and this device's additions
+ * stay in the session they were made in, now one of its own (`label` in its title) that syncs from here.
+ */
+onCommand("replica.split", async ({ id, label }: { id: number; label: string }) => {
+	const { root, sessionsRoot, harness } = requireEngine();
+	const meta = (await listSessions()).find((session) => session.id === id);
+	if (!meta?.syncId) throw new Error(`Session ${id} doesn't sync`);
+	const runs = await replicaRuns(id);
+	const title = `${meta.title} (${label})`;
+	const last = idAt(runs, countOf(runs) - 1);
+	if (last === undefined) {
+		// Nothing shared: the other device's session comes in as a new one.
+		await updateSession(id, (session) => {
+			delete session.syncId;
+			delete session.heldBy;
+			session.title = title;
+		});
+		return { id: null, kept: id };
+	}
+	const source = await requireConversation(id);
+	const fork = await source.fork(last as EntryId, { ownership: { kind: "ownerless" } }, context);
+	const directory = sessionDirectory(sessionsRoot, fork.id);
+	try {
+		await request("fs", "copy", { from: sessionDirectory(sessionsRoot, id), to: directory });
+	} catch {
+		await request("fs", "mkdir", { path: directory, recursive: true });
+	}
+	await fork.configure({ cwd: directory }, context);
+	const pending = (await harness.snapshot(ReplicaDoc, id as ConversationId, context))?.extensions ?? null;
+	await fork.commit(async (tx) => {
+		const replica = await tx.doc(ReplicaDoc, fork.id);
+		replica.runs = runs;
+		replica.extensions = JSON.parse(JSON.stringify(pending)) as JsonValue;
+	}, context);
+	await source.commit(async (tx) => {
+		(await tx.doc(ReplicaDoc, source.id)).runs = [];
+	}, context);
+	const session: SessionMeta = {
+		id: fork.id,
+		title: meta.title,
+		createdAt: meta.createdAt,
+		...(meta.lastActiveAt ? { lastActiveAt: meta.lastActiveAt } : {}),
+		model: { provider: meta.model.provider, modelId: meta.model.modelId },
+		browser: meta.browser ?? null,
+		...(meta.thinkingLevel ? { thinkingLevel: meta.thinkingLevel } : {}),
+		syncId: meta.syncId,
+	};
+	await root.commit(async (tx) => {
+		const doc = await tx.doc(SessionsDoc, root.id);
+		doc.sessions.push(session);
+		const kept = doc.sessions.find((candidate) => candidate.id === id);
+		if (kept) {
+			delete kept.syncId;
+			delete kept.heldBy;
+			kept.title = title;
+		}
+	}, context);
+	await watch(fork.id);
+	emit({ type: "session_added", session });
+	const kept = (await listSessions()).find((candidate) => candidate.id === id);
+	if (kept) emit({ type: "session_updated", session: kept });
+	return { id: fork.id, kept: id };
+});
+
+/**
+ * The user continues here a session another device had: it's this device's now, and the agent reads where it moved
+ * from (`from`, `to`: the devices' names). The session's own extensions load here, as the other device had them.
+ */
+onCommand("replica.claim", async ({ id, from, to }: { id: number; from: string; to: string }) => {
+	const { harness, extensions } = requireEngine();
+	const conversation = await requireConversation(id);
+	await updateSession(id, (session) => {
+		delete session.heldBy;
+	});
+	const text =
+		`This session moved from ${from} to ${to}. Its history and workspace files came along, except installed Python packages (.python), which need installing again. ` +
+		`Whatever was still running on ${from} (a command, a Crabbox box) and its browser sign-ins stayed there. Check the workspace before you rely on earlier results.`;
+	await conversation.submit({ type: "write", entry: customMessageEntry({ customType: "pimobile.moved", content: text, display: true, details: { from, to } }) }, context);
+	const pending = (await harness.snapshot(ReplicaDoc, id as ConversationId, context))?.extensions as { extensions?: Record<string, ExtensionRecord> } | null | undefined;
+	const current = (await harness.snapshot(SessionExtensionsDoc, id as ConversationId, context))?.extensions ?? {};
+	// The ones this device doesn't have as they are (it may have had the session before).
+	const records = Object.values(pending?.extensions ?? {}).filter((record) => JSON.stringify(current[record.name]) !== JSON.stringify(record));
+	return records.length ? await extensions.adoptSessionExtensions(id, records, context) : { added: [], skipped: [] };
+});
+
+/**
+ * Another device has the session now (`heldBy`; null: none does): read-only here. A run it had here stops (what it adds
+ * from now on stays here, `replica.split`), and its Crabbox box is given back.
+ */
+onCommand("replica.setHolder", async ({ id, heldBy }: { id: number; heldBy: string | null }) => {
+	const { harness } = requireEngine();
+	await updateSession(id, (session) => {
+		if (heldBy) session.heldBy = heldBy;
+		else delete session.heldBy;
+	});
+	if (heldBy) {
+		const stream = await watchEvents(harness, id as ConversationId, context);
+		const running = stream.snapshot.run !== undefined;
+		await stream.stop();
+		if (running) await (await requireConversation(id)).abort(context);
+		await releaseSessionLease(harness, id, context);
+	}
+	return null;
+});
+
+/** The sessions this device has with entries the other devices don't have yet (or that never synced). */
+onCommand("replica.unsent", async () => {
+	const ids: number[] = [];
+	for (const session of await listSessions()) {
+		if (session.heldBy) continue;
+		const conversation = await requireEngine().harness.conversation(session.id as ConversationId, context);
+		if (!session.syncId || (conversation && (await hasEntriesAfter(conversation, await replicaRuns(session.id), context)))) ids.push(session.id);
+	}
+	return { ids };
+});
+
+/** The device pi runs on, and whether sessions sync, for the agent's environment section. */
+onCommand("replica.device", ({ kind, name, sync }: { kind?: string; name?: string; sync?: boolean }) => {
+	setDevice({ kind, name, sync });
+	return null;
+});
+
 /** How full a session's context is, and where pi compacts it automatically (`context.ts`). */
 onCommand("session.context", async ({ id }: { id: number }) => {
 	const { models, compaction } = requireEngine();
@@ -673,6 +979,7 @@ onCommand("session.context", async ({ id }: { id: number }) => {
 
 /** Compacts a session's context now (pi's `/compact`), with what the summary should keep, if given. */
 onCommand("session.compact", async ({ id, instructions }: { id: number; instructions?: string }) => {
+	await requireHeldHere(id);
 	await (await requireConversation(id)).compact(instructions?.trim() || undefined, context);
 	return null;
 });
@@ -702,6 +1009,7 @@ onCommand("session.submission", ({ id, submissionId }: { id: number; submissionI
 /** A prompt from the user. While the agent works, `whenBusy` says where it goes: "steer" reaches the agent after its
  * current tool call, "followUp" waits until the run is done. */
 onCommand("session.prompt", async ({ id, text: typed, whenBusy, requestId }: { id: number; text: string; whenBusy?: "steer" | "followUp"; requestId?: string }) => {
+	await requireHeldHere(id);
 	const conversation = await requireConversation(id);
 	if (requestId) {
 		const existing = await conversation.commit((tx) => tx.submissionByRequest(conversation.id, requestId), context);
