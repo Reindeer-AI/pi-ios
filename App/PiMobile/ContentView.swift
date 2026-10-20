@@ -2190,7 +2190,13 @@ private struct CrabboxSection: View {
             broker = app.crabbox.broker ?? ""
             refresh()
         }
-        .sheet(item: $loginURL) { url in SafariView(url: url).ignoresSafeArea() }
+        .sheet(item: $loginURL) { url in
+            if SafariView.isAvailable {
+                SafariView(url: url).ignoresSafeArea()
+            } else {
+                BrowserSignInView(url: url, title: "Crabbox") { loginURL = nil }
+            }
+        }
         .alert("Crabbox token", isPresented: $enteringToken) {
             SecureField("Token", text: $token)
                 .textContentType(.oneTimeCode)
@@ -2372,6 +2378,7 @@ private struct AuthSheet: View {
     @Bindable var app: AppModel
     @State private var value = ""
     @State private var browserURL: URL?
+    @Environment(\.openURL) private var openURL
 
     var body: some View {
         NavigationStack {
@@ -2380,14 +2387,19 @@ private struct AuthSheet: View {
                     if let url = flow.url {
                         Section {
                             if let instructions = flow.instructions { Text(instructions).font(.footnote) }
-                            Button("Open sign-in page") { browserURL = url }
+                            if SafariView.isAvailable {
+                                Button("Open sign-in page") { browserURL = url }
+                            } else if !flow.done, flow.error == nil {
+                                BrowserSignInView.waiting
+                                Button("Open it again") { openURL(url) }
+                            }
                         }
                     }
                     if let deviceCode = flow.deviceCode {
                         Section("Enter this code") {
                             Text(deviceCode.code).font(.largeTitle.monospaced().bold()).textSelection(.enabled)
                             Button("Copy code") { UIPasteboard.general.string = deviceCode.code }
-                            if let uri = deviceCode.uri { Button("Open \(uri.host() ?? uri.absoluteString)") { browserURL = uri } }
+                            if let uri = deviceCode.uri { Button("Open \(uri.host() ?? uri.absoluteString)") { open(uri) } }
                         }
                     }
                     if let prompt = flow.prompt { promptSection(prompt) }
@@ -2411,7 +2423,16 @@ private struct AuthSheet: View {
                 Button(app.authFlow?.done == true || app.authFlow?.error != nil ? "Done" : "Cancel") { app.cancelLogin() }
             }
             .sheet(item: $browserURL) { url in SafariView(url: url).ignoresSafeArea() }
+            // On a Mac, the sign-in page opens in the browser as it comes; the sheet waits for the sign-in to end.
+            .task(id: app.authFlow?.url) {
+                if !SafariView.isAvailable, let url = app.authFlow?.url { openURL(url) }
+            }
         }
+    }
+
+    /// In a Safari sheet, or on a Mac the browser.
+    private func open(_ url: URL) {
+        if SafariView.isAvailable { browserURL = url } else { openURL(url) }
     }
 
     @ViewBuilder
@@ -2538,8 +2559,42 @@ private struct GitHubSection: View {
 struct SafariView: UIViewControllerRepresentable {
     let url: URL
 
+    /// Not on a Mac: there SFSafariViewController hands the page to the browser and closes, and the sheet that closes
+    /// with it ended the sign-in it showed (its loopback listener with it), so the browser's redirect found no one.
+    /// `BrowserSignInView` instead.
+    static var isAvailable: Bool { !ProcessInfo.processInfo.isiOSAppOnMac }
+
     func makeUIViewController(context: Context) -> SFSafariViewController { SFSafariViewController(url: url) }
     func updateUIViewController(_ controller: SFSafariViewController, context: Context) {}
+}
+
+/// A sign-in page on a Mac (where `SafariView` isn't): opened in the browser, while this waits for the sign-in to end
+/// (whoever shows it closes it then), with the page again for a browser window closed too soon, and Cancel.
+struct BrowserSignInView: View {
+    let url: URL
+    let title: String
+    let cancel: () -> Void
+    @Environment(\.openURL) private var openURL
+
+    /// What a sign-in in the browser shows while pi waits for it.
+    static var waiting: some View {
+        Label { Text("Finish signing in in your browser. pi continues once you have.") } icon: { ProgressView() }
+    }
+
+    var body: some View {
+        NavigationStack {
+            Form {
+                Section {
+                    Self.waiting
+                    Button("Open it again") { openURL(url) }
+                }
+            }
+            .navigationTitle(title)
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar { Button("Cancel", action: cancel) }
+        }
+        .task(id: url) { openURL(url) }
+    }
 }
 
 /// Hosts the engine's web view at 1×1 point, nearly transparent, so WebKit treats the page as visible.

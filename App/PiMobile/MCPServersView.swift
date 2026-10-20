@@ -150,8 +150,10 @@ private struct MCPServerDetail: View {
                 OAuthSignInView(url: login.url, redirect: redirect) { response in
                     Task { await app.mcpAuthorizationResponse(response) }
                 }
-            } else {
+            } else if SafariView.isAvailable {
                 SafariView(url: login.url).ignoresSafeArea()
+            } else {
+                BrowserSignInView(url: login.url, title: login.server) { app.mcpLogin = nil }
             }
         }
     }
