@@ -894,47 +894,186 @@ final class AppModel {
         }
     }
 
-    /// Default extensions follow the user's devices (`SyncedSettings`): each records the ones it added and removed, the
-    /// newest change winning per source, and installs or removes the others' (from GitHub, npm or git; one installed from
-    /// a file stays on its device).
-    private func syncExtensions() async {
+    @ObservationIgnored private var syncingExtensions = false
+    @ObservationIgnored private var extensionsAgain = false
+    /// Extensions whose files couldn't be shared this launch, and what their folder was like then: tried again once it changes.
+    @ObservationIgnored private var unsharedExtensions: [String: String] = [:]
+    @ObservationIgnored private var extensionFilesChecked = Date.distantPast
+
+    /// Default extensions follow the user's devices (`SyncedSettings`): each records the ones it added, changed and
+    /// removed, the newest change winning per extension, and installs or removes the others'. One from GitHub, npm or
+    /// git installs from there again; one written on a device (or added from a file) goes as its files, as a .piext file
+    /// has them (`extensions.share`, `extensions.import`), through iCloud with the sessions: only while they sync.
+    func syncExtensions() async {
+        if syncingExtensions {
+            extensionsAgain = true
+            return
+        }
+        syncingExtensions = true
+        defer { syncingExtensions = false }
+        repeat {
+            extensionsAgain = false
+            await syncExtensionsNow()
+        } while extensionsAgain
+    }
+
+    /// How a synced extension reaches the other devices.
+    private enum ExtensionTravel {
+        /// They install it from where it came from (GitHub, npm, git).
+        case source
+        /// Its files go through iCloud.
+        case files
+    }
+
+    /// How the synced extension of this key (`SyncedSettings.syncedExtensionsKey`) travels: its source, or "shared:
+    /// <name>" for its files (the source a device that adds it from them gives it). None for a path on another device,
+    /// which earlier builds listed: no other device can install from it.
+    private static func extensionTravel(_ key: String) -> ExtensionTravel? {
+        if ["npm:", "git:", "github:", "http://", "https://", "git@"].contains(where: key.hasPrefix) { return .source }
+        return key.hasPrefix("shared: ") ? .files : nil
+    }
+
+    private func syncExtensionsNow() async {
         guard let inventory = try? await engine.command("extensions.installed") as? [String: Any],
               let installed = inventory["defaults"] as? [[String: Any]]
         else { return }
         let defaults = UserDefaults.standard
-        let syncable = { (source: String) in !source.hasPrefix("/") && !source.hasPrefix("shared:") && !source.hasPrefix("file:") }
+        // Files go with the sessions: while they don't sync, the extensions written here are left as they were.
+        let withFiles = sync.active
+        let followed = { (key: String) in Self.extensionTravel(key).map { $0 == .source || withFiles } ?? false }
+        // The extension each key names here, by the name it has here when that differs (`extensions.import` names it from
+        // its files).
+        var aliases = defaults.dictionary(forKey: "syncedExtensionAliases") as? [String: String] ?? [:]
         var here: [String: String] = [:]
+        var disabled = Set<String>()
         for extensionInfo in installed {
-            if let source = extensionInfo["source"] as? String, let name = extensionInfo["name"] as? String, syncable(source) { here[source] = name }
+            guard let source = extensionInfo["source"] as? String, let name = extensionInfo["name"] as? String else { continue }
+            let fromSource = extensionInfo["kind"] as? String != "path" && Self.extensionTravel(source) == .source
+            let key = fromSource ? source : aliases[name] ?? "shared: \(name)"
+            guard followed(key) else { continue }
+            here[key] = name
+            if extensionInfo["enabled"] as? Bool == false { disabled.insert(key) }
         }
         var events: [String: [String: Any]] = [:]
         for event in defaults.array(forKey: SyncedSettings.syncedExtensionsKey) as? [[String: Any]] ?? [] {
             if let source = event["source"] as? String { events[source] = event }
         }
-        // What changed here since this device last synced them.
-        let before = Set(defaults.stringArray(forKey: "syncedExtensionsHere") ?? [])
+        // For an extension whose files travel: the version this device has (its hash in iCloud), and what its folder was
+        // like then (`extensionPrint`), to tell when it changes here.
+        var versions = defaults.dictionary(forKey: "syncedExtensionFiles") as? [String: String] ?? [:]
+        var prints = defaults.dictionary(forKey: "syncedExtensionPrints") as? [String: String] ?? [:]
+        let listed = defaults.stringArray(forKey: "syncedExtensionsHere") ?? []
+        let before = Set(listed.filter(followed))
         let now = Date().timeIntervalSince1970
-        for source in Set(here.keys).subtracting(before) { events[source] = ["source": source, "at": now, "removed": false] }
-        for source in before.subtracting(here.keys) { events[source] = ["source": source, "at": now, "removed": true] }
+        var unsent = Set<String>()
+        // What changed here since this device last synced them.
+        for key in Set(here.keys).subtracting(before) where Self.extensionTravel(key) == .source {
+            events[key] = ["source": key, "at": now, "removed": false]
+        }
+        for key in before.subtracting(here.keys) {
+            events[key] = ["source": key, "at": now, "removed": true]
+            versions[key] = nil
+            prints[key] = nil
+        }
+        // New here, or its files changed (edited in Settings, written again): its files go up, then the others hear.
+        // One turned off isn't loaded, so it can't be shared; it stays as it was.
+        for (key, name) in here where Self.extensionTravel(key) == .files && !disabled.contains(key) {
+            let print = extensionPrint(name)
+            guard !before.contains(key) || print != prints[key], unsharedExtensions[key] != print else { continue }
+            do {
+                let hash = try await sync.putExtension(try await sharedExtension(name))
+                prints[key] = print
+                unsharedExtensions[key] = nil
+                guard hash != versions[key] else { continue }
+                versions[key] = hash
+                if events[key]?["files"] as? String != hash || events[key]?["removed"] as? Bool == true {
+                    events[key] = ["source": key, "at": now, "removed": false, "name": name, "files": hash]
+                    log("sync", "extension \(name) sent to your other devices")
+                }
+            } catch {
+                unsent.insert(key)
+                unsharedExtensions[key] = print
+                log("sync", "extension \(name) not sent: \(error.localizedDescription)")
+            }
+        }
         // What changed on the others.
-        for (source, event) in events {
+        for (key, event) in events where followed(key) && !unsent.contains(key) {
             let removed = event["removed"] as? Bool == true
-            if removed, let name = here[source] {
+            if removed, let name = here[key] {
                 _ = try? await engine.command("extensions.remove", ["name": name])
-                here.removeValue(forKey: source)
+                here.removeValue(forKey: key)
+                versions[key] = nil
+                prints[key] = nil
+                aliases[name] = nil
                 log("sync", "extension \(name) removed (on another device)")
-            } else if !removed, here[source] == nil {
+            } else if !removed, Self.extensionTravel(key) == .files {
+                guard let hash = event["files"] as? String, hash != versions[key] else { continue }
                 do {
-                    let added = try await engine.command("extensions.addDefault", ["source": source]) as? [String: Any]
-                    here[source] = added?["name"] as? String ?? source
-                    log("sync", "extension \(source) added (from another device)")
+                    let shared = try JSONSerialization.jsonObject(with: try await sync.extensionData(hash))
+                    let added = try await engine.command("extensions.import", ["shared": shared]) as? [String: Any]
+                    let name = added?["name"] as? String ?? event["name"] as? String ?? String(key.dropFirst("shared: ".count))
+                    if "shared: \(name)" != key { aliases[name] = key }
+                    log("sync", "extension \(name) \(here[key] == nil ? "added" : "updated") (from another device)")
+                    here[key] = name
+                    versions[key] = hash
+                    prints[key] = extensionPrint(name)
                 } catch {
-                    log("sync", "extension \(source): \(error.localizedDescription)")
+                    log("sync", "extension \(event["name"] as? String ?? key): \(error.localizedDescription)")
+                }
+            } else if !removed, here[key] == nil {
+                do {
+                    let added = try await engine.command("extensions.addDefault", ["source": key]) as? [String: Any]
+                    here[key] = added?["name"] as? String ?? key
+                    log("sync", "extension \(key) added (from another device)")
+                } catch {
+                    log("sync", "extension \(key): \(error.localizedDescription)")
+                }
+            }
+        }
+        // Files an earlier build's sweep deleted (it knew only of sessions') go again from a device that has them.
+        if withFiles, Date.now.timeIntervalSince(extensionFilesChecked) > 3600 {
+            extensionFilesChecked = .now
+            let current = here.filter { key, _ in versions[key] != nil && events[key]?["files"] as? String == versions[key] }
+            if !current.isEmpty, let missing = try? await sync.missingExtensions(current.keys.compactMap { versions[$0] }), !missing.isEmpty {
+                for (key, name) in current where missing.contains(versions[key] ?? "") {
+                    guard let data = try? await sharedExtension(name), WorkspaceFiles.sha256(data) == versions[key] else { continue }
+                    if (try? await sync.putExtension(data)) != nil { log("sync", "extension \(name) sent again (iCloud no longer had it)") }
                 }
             }
         }
         defaults.set(events.keys.sorted().compactMap { events[$0] }, forKey: SyncedSettings.syncedExtensionsKey)
-        defaults.set(here.keys.sorted(), forKey: "syncedExtensionsHere")
+        // Kept for when sync follows them again (files once sessions sync); earlier builds' paths go.
+        let kept = listed.filter { Self.extensionTravel($0) != nil && !followed($0) }
+        defaults.set(Set(here.keys).union(kept).sorted(), forKey: "syncedExtensionsHere")
+        defaults.set(versions, forKey: "syncedExtensionFiles")
+        defaults.set(prints, forKey: "syncedExtensionPrints")
+        defaults.set(aliases, forKey: "syncedExtensionAliases")
+    }
+
+    /// A default extension's files, as a .piext file has them; sorted, so the same files are the same blob in iCloud.
+    private func sharedExtension(_ name: String) async throws -> Data {
+        let shared = try await engine.command("extensions.share", ["name": name]) ?? [:]
+        return try JSONSerialization.data(withJSONObject: shared, options: [.sortedKeys])
+    }
+
+    /// What a default extension's installed files are like (paths, sizes, modification dates), to tell when they change
+    /// without reading them.
+    private func extensionPrint(_ name: String) -> String {
+        var folderName = name
+        if let slash = folderName.range(of: "/") { folderName.replaceSubrange(slash, with: "+") }
+        let folder = extensionsRoot.appending(path: "local/\(folderName)", directoryHint: .isDirectory)
+        let keys: [URLResourceKey] = [.isRegularFileKey, .fileSizeKey, .contentModificationDateKey]
+        guard let walker = FileManager.default.enumerator(at: folder, includingPropertiesForKeys: keys) else { return "" }
+        var lines: [String] = []
+        for case let file as URL in walker {
+            if ["node_modules", ".git"].contains(file.lastPathComponent) {
+                walker.skipDescendants()
+                continue
+            }
+            guard let values = try? file.resourceValues(forKeys: Set(keys)), values.isRegularFile == true else { continue }
+            lines.append("\(file.path.dropFirst(folder.path.count)) \(values.fileSize ?? 0) \(values.contentModificationDate?.timeIntervalSince1970 ?? 0)")
+        }
+        return WorkspaceFiles.sha256(Data(lines.sorted().joined(separator: "\n").utf8))
     }
 
     /// The network endpoint's models as last discovered, so the store opens without waiting for the endpoint (through a
@@ -2284,6 +2423,7 @@ final class AppModel {
         if state == "active" {
             endBackgroundTask()
             // Other devices' changes since pi was last in front.
+            if phase == .ready, SyncedSettings.shared.refreshExtensions() { Task { await syncExtensions() } }
             sync.kick()
             // What background checks wanted to ask while pi couldn't.
             Task { await ExtensionPermissions.shared.askPending() }

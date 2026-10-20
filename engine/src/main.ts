@@ -768,14 +768,17 @@ onCommand(
 		heldBy: string | null;
 		model?: { provider: string; modelId: string };
 	}) => {
-		const { harness, root, sessionsRoot, models, browser } = requireEngine();
-		const known = (model: ReplicaMeta["model"]) => (model && models.getModel(model.provider, model.modelId) ? model : undefined);
+		const { harness, root, sessionsRoot, browser } = requireEngine();
+		// Its model as the device that has it set it, even one this device can't use (not signed in to it here, or its
+		// server out of reach): the session shows it, and a run here asks for another. Changing it silently would have
+		// the session go on with a model the user never chose for it.
+		const own = meta.model?.provider && meta.model.modelId ? meta.model : undefined;
 		let session = (await listSessions()).find((candidate) => candidate.syncId === syncId);
 		let created = false;
 		if (!session) {
 			if (base !== 0) return { id: null, missing: 0 };
-			// Its model if this device has it, else the app's default.
-			const model = known(meta.model) ?? fallback ?? meta.model ?? undefined;
+			// The app's default only for a session that has none.
+			const model = own ?? fallback;
 			const conversation = await harness.createConversation({ ownership: { kind: "ownerless" }, agent: model ? { model } : {} }, context);
 			const directory = sessionDirectory(sessionsRoot, conversation.id);
 			await request("fs", "mkdir", { path: directory, recursive: true });
@@ -817,8 +820,8 @@ onCommand(
 			}
 			return countOf(next);
 		}, context);
-		// Its settings, as the device that has it set them (the model only if this device has it).
-		const model = known(meta.model);
+		// Its settings, as the device that has it set them.
+		const model = own;
 		const agent = docs?.agent;
 		if (model || agent?.thinkingLevel || agent?.instructions) {
 			await conversation.configure(

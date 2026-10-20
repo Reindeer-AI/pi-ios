@@ -183,7 +183,7 @@ struct SyncSettingsSection: View {
         } header: {
             Text("Sessions")
         } footer: {
-            Text("Your sessions, their history and their workspace files sync to your iPhone, iPad and Mac through iCloud. A session runs on one device at a time; on the others it's read-only until you tap Continue Here. Installed Python packages stay on each device.")
+            Text("Your sessions, their history and their workspace files sync to your iPhone, iPad and Mac through iCloud. A session runs on one device at a time; on the others it's read-only until you tap Continue Here. Extensions written in pi go too, and a session keeps its model. Installed Python packages stay on each device.")
         }
     }
 }

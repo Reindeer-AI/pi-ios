@@ -94,6 +94,9 @@ final class SessionSync {
         /// Chunks and blobs no session referred to at a sweep, and since when (`sweep`).
         var unreferred: [String: Date]?
         var lastSwept: Date?
+        /// 1 once every session from another device was brought up to date again for its model, which earlier builds
+        /// left at this device's default when this device couldn't use it.
+        var models: Int?
 
         struct Applied: Codable {
             var count: Int
@@ -142,6 +145,10 @@ final class SessionSync {
             if let data = try? Data(contentsOf: stateFile!), let state = try? JSONDecoder().decode(Saved.self, from: data) { saved = state }
             records = saved.records
             lastSynced = saved.lastSynced
+            if saved.models != 1 {
+                for syncId in saved.applied.keys { saved.applied[syncId]?.tag = nil }
+                saved.models = 1
+            }
         }
         let interval = UserDefaults.standard.double(forKey: "syncInterval")
         if ticker == nil {
@@ -260,6 +267,8 @@ final class SessionSync {
             failure = nil
             lastSynced = .now
             await sweep(cloud)
+            // Extensions written on a device travel with the sessions.
+            Task { await app.syncExtensions() }
         } catch {
             failure = Self.describe(error)
             log("sync", "failed: \(failure ?? "")")
@@ -376,6 +385,27 @@ final class SessionSync {
             try await cloud.putBlob(hash, file: file)
         }
         return hash
+    }
+
+    // MARK: - Extensions' files
+
+    /// An extension written on this device, as `extensions.share` gives it, in iCloud for the others
+    /// (`AppModel.syncExtensions`); its hash.
+    func putExtension(_ data: Data) async throws -> String {
+        guard active, let cloud else { throw SyncError.message("Sessions don't sync") }
+        return try await putBlob(data, cloud: cloud)
+    }
+
+    /// Another device's extension, by its hash.
+    func extensionData(_ hash: String) async throws -> Data {
+        guard active, let cloud else { throw SyncError.message("Sessions don't sync") }
+        return try await cloud.blob(hash)
+    }
+
+    /// Of these extensions' hashes, the ones iCloud doesn't have (an earlier build's sweep knew only of sessions).
+    func missingExtensions(_ hashes: [String]) async throws -> Set<String> {
+        guard active, let cloud else { throw SyncError.message("Sessions don't sync") }
+        return try await cloud.missingBlobs(hashes)
     }
 
     // MARK: - Receiving
@@ -574,10 +604,10 @@ final class SessionSync {
         return false
     }
 
-    /// Every so often (a day, `-syncSweepEvery` seconds): deletes from iCloud the chunks and files no session refers to
-    /// any more (deleted sessions', earlier versions of files), once nothing has referred to them for that long, so what
-    /// another device is sending just then (its files go before its record) stays. Only after a pull that read every
-    /// record; nothing goes if a session's manifest can't be read.
+    /// Every so often (a day, `-syncSweepEvery` seconds): deletes from iCloud the chunks and files no session (nor synced
+    /// extension) refers to any more (deleted sessions', earlier versions of files), once nothing has referred to them
+    /// for that long, so what another device is sending just then (its files go before its record) stays. Only after a
+    /// pull that read every record; nothing goes if a session's manifest can't be read.
     private func sweep(_ cloud: SessionCloud) async {
         let defaults = UserDefaults.standard
         let every = defaults.object(forKey: "syncSweepEvery") == nil ? 86_400 : defaults.double(forKey: "syncSweepEvery")
@@ -588,6 +618,10 @@ final class SessionSync {
             for record in live {
                 referred.formUnion(record.chunks.map { SessionRecord.storedName(chunk: $0, session: record.syncId) })
                 referred.formUnion([record.manifest, record.docs].compactMap { $0 }.map(SessionRecord.storedName(blob:)))
+            }
+            // And the extensions the devices list (`AppModel.syncExtensions`).
+            for event in UserDefaults.standard.array(forKey: SyncedSettings.syncedExtensionsKey) as? [[String: Any]] ?? [] {
+                if event["removed"] as? Bool != true, let hash = event["files"] as? String { referred.insert(SessionRecord.storedName(blob: hash)) }
             }
             let manifests = Set(live.compactMap(\.manifest))
             try await withThrowingTaskGroup(of: FileManifest.self) { group in

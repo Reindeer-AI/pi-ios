@@ -4,7 +4,8 @@
 # gets that back (tools/DemoTour's testSyncSend, testSyncContinue, testSyncBack). Then the iPhone adds to the session with
 # sync off while the Mac takes it over; once the iPhone syncs again, the Mac's work is in the session and the iPhone's
 # offline work in a session of its own (testSyncOffline, testSyncTakeOver, testSyncSplit). The files are checked in each
-# simulator's copy of the workspaces.
+# simulator's copy of the workspaces. Last, an extension written on the iPhone is installed on the Mac, and a session
+# keeps its model there though the Mac doesn't have it (testSyncExtension, testSyncExtensionGot).
 #
 #   scripts/test-session-sync.sh [WORK]    WORK: a folder for builds and the shared folder (default: a new one)
 #   KEEP=1 keeps the simulators afterwards.
@@ -94,4 +95,30 @@ blob() { printf '%s\n' "$1" | shasum -a 256 | cut -d' ' -f1; }
 [[ -e "$CLOUD/blobs/$(blob "written offline")" ]] || { echo "error: the iPhone's session's file is gone from the folder" >&2; exit 1; }
 [[ -z "$(workspace_file "$MAC" mac.txt)" && -z "$(workspace_file "$PHONE" mac.txt)" ]] || { echo "error: the deleted session's workspace is still on a device" >&2; exit 1; }
 echo "the deleted session's file: swept from the folder and gone from both devices; the other session's file stays"
+# The iPhone writes an extension in a session whose model the Mac doesn't have, and adds it for every session; with the
+# settings in the folder too, the Mac installs it from its files, and lists the session with its own model.
+step "$PHONE" testSyncExtension
+python3 - "$CLOUD" <<'EOF'
+import os, plistlib, sys
+root = sys.argv[1]
+settings = plistlib.load(open(os.path.join(root, "settings"), "rb"))
+item = settings.get("syncedExtensions", {}).get("items", {}).get("shared: synctest")
+if not item: sys.exit(f"error: no synced extension in the settings: {settings.get('syncedExtensions')}")
+event = plistlib.loads(item["value"]) if isinstance(item["value"], bytes) else item["value"]
+if not os.path.exists(os.path.join(root, "blobs", event["files"])): sys.exit(f"error: the extension's files aren't in the folder: {event}")
+print("the extension: listed in the settings, its files in the folder")
+EOF
+step "$MAC" testSyncExtensionGot
+data=$(xcrun simctl get_app_container "$MAC" "$BUNDLE_ID" data)
+[[ -f "$data/Library/Application Support/extensions/local/synctest/synctest.ts" ]] || { echo "error: the extension isn't installed on the Mac" >&2; exit 1; }
+python3 - "$data/Library/Application Support" <<'EOF'
+import glob, json, sys
+for path in glob.glob(f"{sys.argv[1]}/sessions-*.json"):
+    data = json.load(open(path))
+    sessions = data if isinstance(data, list) else data.get("sessions", [])
+    if any((s.get("model") or {}).get("modelId") == "sync-own" for s in sessions): break
+else:
+    sys.exit("error: the iPhone's session doesn't have its model on the Mac")
+print("the iPhone's session: its own model on the Mac")
+EOF
 echo "Session sync works between the two simulators."

@@ -1965,7 +1965,7 @@ private struct SettingsView: View {
                 } header: {
                     Text("iCloud")
                 } footer: {
-                    Text("Sign-ins, the network server, the default model, extensions and their secrets, MCP servers and the vault sync to your devices signed in to the same Apple Account, through iCloud Keychain (end-to-end encrypted). Changes from another device apply when pi starts; the newest change wins, and lists merge item by item.")
+                    Text("Sign-ins, the network server, the default model, extensions and their secrets, MCP servers and the vault sync to your devices signed in to the same Apple Account, through iCloud Keychain (end-to-end encrypted). Changes from another device apply when pi starts (extensions also when it comes to the front); the newest change wins, and lists merge item by item. Extensions written in pi go to your other devices through iCloud while sessions sync.")
                 }
 
                 if app.sync.supported { SyncSettingsSection(sync: app.sync) }

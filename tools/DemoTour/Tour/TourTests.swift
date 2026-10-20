@@ -3132,10 +3132,12 @@ final class TourTests: XCTestCase {
     // MARK: - Session sync (two simulators, SYNC_FOLDER standing in for iCloud; scripts/test-session-sync.sh runs the steps)
 
     /// pi as one of the user's devices, syncing through SYNC_FOLDER (sweeping it at every sync).
-    private func launchSyncing(as device: String) throws {
+    /// `settings`: the synced settings in the shared folder too (not in iCloud Keychain, which simulators don't share).
+    private func launchSyncing(as device: String, model: String = "network:sync-test", settings: Bool = false) throws {
         let folder = try XCTUnwrap(ProcessInfo.processInfo.environment["SYNC_FOLDER"], "SYNC_FOLDER")
         pi.launchArguments += ["-syncFolder", folder, "-syncDeviceName", device, "-syncInterval", "3", "-syncSweepEvery", "0",
-                               "-setDefaultModel", "network:sync-test"]
+                               "-setDefaultModel", model]
+        if settings { pi.launchArguments += ["-syncSettingsFolder", folder] }
         launchReady()
     }
 
@@ -3291,6 +3293,45 @@ final class TourTests: XCTestCase {
         XCTAssertTrue(element(containing: "(iPhone)").waitForExistence(timeout: 10), "the iPhone's session")
         // Sweeps (at every sync here) delete what only the deleted session referred to.
         pause(12)
+    }
+
+    /// Step 9, on the "iPhone": a session with a model the "Mac" doesn't have, which writes an extension; added for every
+    /// session, with the settings in the shared folder, the extension goes to the "Mac" as its files.
+    func testSyncExtension() throws {
+        try launchSyncing(as: "iPhone", model: "network:sync-own")
+        tap(pi.buttons["New session"].firstMatch)
+        pause(1)
+        run("!mkdir -p ../ext && echo 'export default function () {}' > ../ext/synctest.ts")
+        pause(3)
+        backToSessions()
+        waitAllSynced("the session is in iCloud")
+        pi.terminate()
+        pi.launchArguments += ["-syncSettingsFolder", try XCTUnwrap(ProcessInfo.processInfo.environment["SYNC_FOLDER"]),
+                               "-engineCommands", #"extensions.addDefault {"source": "ext/synctest.ts"}"#]
+        launchReady()
+        waitAllSynced("synced again")
+        // The extension goes once a sync ends; the settings a moment after they change.
+        pause(10)
+    }
+
+    /// Step 10, on the "Mac": the iPhone's session keeps its model here, and the extension written on the iPhone is one
+    /// of this device's.
+    func testSyncExtensionGot() throws {
+        try launchSyncing(as: "Mac", settings: true)
+        waitAllSynced("up to date")
+        pause(8)
+        tap(pi.buttons["Settings"])
+        pause(2)
+        let row = pi.buttons["Extensions and skills"].firstMatch
+        let bar = pi.navigationBars.firstMatch
+        for _ in 0..<10 where !(row.exists && row.isHittable && row.frame.minY > bar.frame.maxY + 8) {
+            pi.swipeUp(velocity: .slow)
+            pause(0.8)
+        }
+        tap(row)
+        let found = element(containing: "synctest").waitForExistence(timeout: 20)
+        if !found { print("SCREEN:\n\(pi.debugDescription)") }
+        XCTAssertTrue(found, "the iPhone's extension")
     }
 
     private func launchReady() {

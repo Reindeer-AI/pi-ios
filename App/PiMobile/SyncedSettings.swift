@@ -11,7 +11,10 @@ import Security
 @MainActor
 @Observable
 final class SyncedSettings {
-    static let shared = SyncedSettings(defaults: .standard, store: KeychainSyncStore())
+    static let shared = SyncedSettings(
+        defaults: .standard,
+        store: UserDefaults.standard.string(forKey: "syncSettingsFolder").map { FolderSyncStore(folder: URL(fileURLWithPath: $0)) } ?? KeychainSyncStore()
+    )
 
     init(defaults: UserDefaults, store: SyncStore) {
         self.defaults = defaults
@@ -94,6 +97,14 @@ final class SyncedSettings {
         observe()
     }
 
+    /// Takes the extensions other devices changed since pi started (it came to the front), for the app to install and
+    /// remove (`AppModel.syncExtensions`); whether there were any. Only those: other settings apply when pi starts,
+    /// before the app reads them.
+    func refreshExtensions() -> Bool {
+        guard joined, conflicts.isEmpty else { return false }
+        return !pull(remote(), only: [Self.syncedExtensionsKey]).isEmpty
+    }
+
     /// The user's choice for a device's first sync: iCloud's settings, or this device's (sent as the newest).
     func resolve(useICloud: Bool) {
         // This device's: its single values, and its version of the list items both have, win; the rest merges.
@@ -132,11 +143,13 @@ final class SyncedSettings {
 
     // MARK: - Pull and push
 
-    /// `prefer`: settings this device keeps (a single value: nil; a list: the items it keeps), sent by `push(prefer:)`.
-    private func pull(_ remote: [String: [String: Any]], prefer: [String: Set<String>?] = [:]) {
+    /// `prefer`: settings this device keeps (a single value: nil; a list: the items it keeps), sent by `push(prefer:)`;
+    /// `only`: just these settings. The settings that changed.
+    @discardableResult
+    private func pull(_ remote: [String: [String: Any]], prefer: [String: Set<String>?] = [:], only: Set<String>? = nil) -> [String] {
         var at = syncedAt, items = itemsAt, values = syncedValues
         var applied: [String] = []
-        for (key, kind) in Self.keys {
+        for (key, kind) in Self.keys where only?.contains(key) ?? true {
             guard let entry = remote[key] else { continue }
             if let kept = prefer[key], kept == nil { continue }
             let keptItems = prefer[key].flatMap { $0 } ?? []
@@ -177,6 +190,7 @@ final class SyncedSettings {
         itemsAt = items
         syncedValues = values
         if !applied.isEmpty { log("sync", "from your other devices: \(applied.sorted().joined(separator: ", "))") }
+        return applied
     }
 
     /// Sends what changed here since the last sync. `prefer` sends those settings (single values, list items) as the
@@ -390,4 +404,15 @@ struct KeychainSyncStore: SyncStore {
         if status == errSecItemNotFound { status = SecItemAdd(Self.item.merging(attributes) { $1 } as CFDictionary, nil) }
         guard status == errSecSuccess else { throw NSError(domain: NSOSStatusErrorDomain, code: Int(status)) }
     }
+}
+
+/// A file in a folder that test devices share (`-syncSettingsFolder`), in place of iCloud Keychain.
+struct FolderSyncStore: SyncStore {
+    let folder: URL
+
+    private var file: URL { folder.appending(path: "settings") }
+
+    func read() -> Data? { try? Data(contentsOf: file) }
+
+    func write(_ data: Data) throws { try data.write(to: file, options: .atomic) }
 }
