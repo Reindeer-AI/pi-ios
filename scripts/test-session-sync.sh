@@ -73,4 +73,25 @@ expect_file "$MAC" mac.txt "written on the Mac"
 step "$PHONE" testSyncSplit
 expect_file "$PHONE" offline.txt "written offline"
 expect_file "$PHONE" mac.txt "written on the Mac"
+# The iPhone deletes the Mac's session with sync off; it's deleted in the folder once it syncs, then on the Mac.
+step "$PHONE" testSyncDelete
+python3 - "$CLOUD" <<'EOF'
+import json, os, sys
+root = sys.argv[1]
+records = [json.load(open(os.path.join(root, "records", name)))["record"] for name in os.listdir(os.path.join(root, "records")) if name.endswith(".json")]
+deleted = [record for record in records if record["deleted"]]
+if len(deleted) != 1: sys.exit(f"error: {len(deleted)} deleted records")
+record = deleted[0]
+if record["title"] or record["holderName"] or record["holder"] or record["chunks"] or "manifest" in record or "docs" in record:
+    sys.exit(f"error: the deleted session's record still has {record}")
+chunks = os.path.join(root, "chunks", record["syncId"])
+if os.path.isdir(chunks) and os.listdir(chunks): sys.exit(f"error: the deleted session's chunks are still there: {os.listdir(chunks)}")
+print("the deleted session's record: emptied, its chunks gone")
+EOF
+step "$MAC" testSyncDeleted
+blob() { printf '%s\n' "$1" | shasum -a 256 | cut -d' ' -f1; }
+[[ ! -e "$CLOUD/blobs/$(blob "written on the Mac")" ]] || { echo "error: the deleted session's file is still in the folder" >&2; exit 1; }
+[[ -e "$CLOUD/blobs/$(blob "written offline")" ]] || { echo "error: the iPhone's session's file is gone from the folder" >&2; exit 1; }
+[[ -z "$(workspace_file "$MAC" mac.txt)" && -z "$(workspace_file "$PHONE" mac.txt)" ]] || { echo "error: the deleted session's workspace is still on a device" >&2; exit 1; }
+echo "the deleted session's file: swept from the folder and gone from both devices; the other session's file stays"
 echo "Session sync works between the two simulators."

@@ -56,10 +56,11 @@ final class CloudKitSessionCloud: SessionCloud, @unchecked Sendable {
 
     // MARK: Records
 
-    func changes(since token: Data?) async throws -> (records: [SessionRecord], token: Data?) {
+    func changes(since token: Data?) async throws -> (records: [SessionRecord], token: Data?, complete: Bool) {
         try await withZones {
             var changeToken = token.flatMap { try? NSKeyedUnarchiver.unarchivedObject(ofClass: CKServerChangeToken.self, from: $0) }
             var records: [SessionRecord] = []
+            var complete = true
             while true {
                 let page: (modificationResultsByID: [CKRecord.ID: Result<CKDatabase.RecordZoneChange.Modification, Error>], deletions: [CKDatabase.RecordZoneChange.Deletion], changeToken: CKServerChangeToken, moreComing: Bool)
                 do {
@@ -67,16 +68,23 @@ final class CloudKitSessionCloud: SessionCloud, @unchecked Sendable {
                 } catch let error as CKError where error.code == .changeTokenExpired {
                     changeToken = nil
                     records = []
+                    complete = true
                     continue
                 }
-                for case .success(let modification) in page.modificationResultsByID.values {
-                    remember(modification.record)
-                    records.append(Self.session(from: modification.record))
+                for result in page.modificationResultsByID.values {
+                    switch result {
+                    case .success(let modification):
+                        remember(modification.record)
+                        records.append(Self.session(from: modification.record))
+                    case .failure:
+                        complete = false
+                    }
                 }
                 changeToken = page.changeToken
                 if !page.moreComing { break }
             }
-            return (records, changeToken.flatMap { try? NSKeyedArchiver.archivedData(withRootObject: $0, requiringSecureCoding: true) })
+            guard complete else { return (records, token, false) }
+            return (records, changeToken.flatMap { try? NSKeyedArchiver.archivedData(withRootObject: $0, requiringSecureCoding: true) }, true)
         }
     }
 
@@ -171,11 +179,11 @@ final class CloudKitSessionCloud: SessionCloud, @unchecked Sendable {
     // MARK: Contents
 
     private func chunkID(_ name: String, session: String) -> CKRecord.ID {
-        CKRecord.ID(recordName: "chunk.\(session).\(name)", zoneID: Self.dataZone)
+        CKRecord.ID(recordName: SessionRecord.storedName(chunk: name, session: session), zoneID: Self.dataZone)
     }
 
     private func blobID(_ hash: String) -> CKRecord.ID {
-        CKRecord.ID(recordName: "blob.\(hash)", zoneID: Self.dataZone)
+        CKRecord.ID(recordName: SessionRecord.storedName(blob: hash), zoneID: Self.dataZone)
     }
 
     /// Saves a record with `file` as its asset, replacing one of that name.
@@ -212,10 +220,25 @@ final class CloudKitSessionCloud: SessionCloud, @unchecked Sendable {
         try await contents(chunkID(name, session: session))
     }
 
-    func deleteChunks(named names: [String], session: String) async throws {
+    /// The zone "Data" from its start, names only (no contents).
+    func stored() async throws -> [String] {
+        try await withZones {
+            var names: [String] = []
+            var token: CKServerChangeToken?
+            while true {
+                let page = try await database.recordZoneChanges(inZoneWith: Self.dataZone, since: token, desiredKeys: [])
+                names += page.modificationResultsByID.keys.map(\.recordName)
+                token = page.changeToken
+                if !page.moreComing { break }
+            }
+            return names
+        }
+    }
+
+    func delete(stored names: [String]) async throws {
         try await withZones {
             for start in stride(from: 0, to: names.count, by: Self.batch) {
-                let ids = names[start..<min(start + Self.batch, names.count)].map { chunkID($0, session: session) }
+                let ids = names[start..<min(start + Self.batch, names.count)].map { CKRecord.ID(recordName: $0, zoneID: Self.dataZone) }
                 _ = try await database.modifyRecords(saving: [], deleting: ids)
             }
         }

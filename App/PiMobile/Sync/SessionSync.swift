@@ -70,6 +70,8 @@ final class SessionSync {
     @ObservationIgnored private var ticker: Task<Void, Never>?
     @ObservationIgnored private var busy = false
     @ObservationIgnored private var waiters: [CheckedContinuation<Void, Never>] = []
+    /// Whether the last pull read every record (a sweep goes by them).
+    @ObservationIgnored private var pulledAll = false
 
     private static let enabledKey = "syncSessions"
     private static let nameKey = "syncDeviceName"
@@ -87,6 +89,11 @@ final class SessionSync {
         var device: String?
         /// An id an earlier build made up for this device when iOS hadn't given one: the sessions it sent are this device's.
         var former: String?
+        /// Sessions deleted here that iCloud doesn't have deleted yet (sync ids): offline, or with sync off.
+        var deleting: Set<String>?
+        /// Chunks and blobs no session referred to at a sweep, and since when (`sweep`).
+        var unreferred: [String: Date]?
+        var lastSwept: Date?
 
         struct Applied: Codable {
             var count: Int
@@ -246,11 +253,13 @@ final class SessionSync {
         }
         do {
             try await pull(cloud)
+            try await sendDeletions(cloud)
             // What the engine has that iCloud doesn't, whether or not this device saw it come.
             if let unsent = try await command("replica.unsent", [:])["ids"] as? [Int] { saved.dirty.formUnion(unsent) }
             for id in pending(in: app) { try await push(id, cloud: cloud) }
             failure = nil
             lastSynced = .now
+            await sweep(cloud)
         } catch {
             failure = Self.describe(error)
             log("sync", "failed: \(failure ?? "")")
@@ -372,9 +381,10 @@ final class SessionSync {
     // MARK: - Receiving
 
     private func pull(_ cloud: SessionCloud) async throws {
-        let (changed, token) = try await cloud.changes(since: saved.token)
+        let (changed, token, complete) = try await cloud.changes(since: saved.token)
         for record in changed { records[record.syncId] = record }
         saved.token = token
+        pulledAll = complete
         // Every session other devices have, whether it changed now or an earlier download didn't finish; the latest first.
         for record in records.values.sorted(by: { $0.updatedAt > $1.updatedAt }) {
             try await reconcile(record, cloud: cloud)
@@ -383,6 +393,8 @@ final class SessionSync {
 
     private func reconcile(_ record: SessionRecord, cloud: SessionCloud) async throws {
         guard let app else { return }
+        // Deleted here: not to come back before iCloud has it deleted.
+        if saved.deleting?.contains(record.syncId) == true { return }
         let local = app.sessions.first { $0.syncId == record.syncId }
         if record.deleted {
             if let local {
@@ -518,26 +530,91 @@ final class SessionSync {
         kick()
     }
 
-    /// A session deleted here: deleted on every device.
+    /// A session deleted here: deleted on every device, once iCloud has it deleted (`sendDeletions`), even if this
+    /// device is offline or doesn't sync now.
     func deleted(syncId: String?) {
-        guard active, let syncId, let cloud else { return }
-        Task {
-            await serialized {
-                for _ in 1...3 {
-                    guard var record = (try? await cloud.record(syncId)) ?? nil, !record.deleted else { break }
-                    record.deleted = true
-                    record.running = false
-                    record.updatedAt = .now
-                    guard let result = try? await cloud.save(record) else { break }
-                    if case .saved(let stored) = result {
-                        records[syncId] = stored
-                        try? await cloud.deleteChunks(named: record.chunks, session: syncId)
-                        break
-                    }
-                }
-                saved.applied[syncId] = nil
-                persist()
+        guard cloud != nil, let syncId else { return }
+        saved.deleting = (saved.deleting ?? []).union([syncId])
+        saved.applied[syncId] = nil
+        persist()
+        kick()
+    }
+
+    /// Deletes in iCloud the sessions deleted here, and empties deleted sessions' records that still hold something
+    /// (earlier builds kept them): each record stays, with nothing of its session in it, so a device that was offline
+    /// deletes its copy too. Their chunks go now, their files with the sweep.
+    private func sendDeletions(_ cloud: SessionCloud) async throws {
+        let full = records.values.filter { $0.deleted && !$0.emptied }.map(\.syncId)
+        for syncId in (saved.deleting ?? []).union(full) {
+            if try await sendDeletion(syncId, cloud: cloud) { saved.deleting?.remove(syncId) }
+        }
+    }
+
+    /// One session's deletion; false when its record kept changing (the next sync tries again).
+    private func sendDeletion(_ syncId: String, cloud: SessionCloud) async throws -> Bool {
+        for _ in 1...3 {
+            // None: it never got to iCloud (what did is the sweep's).
+            guard var record = try await cloud.record(syncId) else { return true }
+            if record.deleted, record.emptied {
+                records[syncId] = record
+                return true
             }
+            let chunks = record.chunks
+            record.empty()
+            switch try await cloud.save(record) {
+            case .saved(let stored):
+                records[syncId] = stored
+                try await cloud.deleteChunks(named: chunks, session: syncId)
+                log("sync", "deleted \(syncId) in iCloud")
+                return true
+            case .conflict(let theirs):
+                records[syncId] = theirs
+            }
+        }
+        return false
+    }
+
+    /// Every so often (a day, `-syncSweepEvery` seconds): deletes from iCloud the chunks and files no session refers to
+    /// any more (deleted sessions', earlier versions of files), once nothing has referred to them for that long, so what
+    /// another device is sending just then (its files go before its record) stays. Only after a pull that read every
+    /// record; nothing goes if a session's manifest can't be read.
+    private func sweep(_ cloud: SessionCloud) async {
+        let defaults = UserDefaults.standard
+        let every = defaults.object(forKey: "syncSweepEvery") == nil ? 86_400 : defaults.double(forKey: "syncSweepEvery")
+        guard pulledAll, Date.now.timeIntervalSince(saved.lastSwept ?? .distantPast) >= every else { return }
+        do {
+            let live = records.values.filter { !$0.deleted }
+            var referred = Set<String>()
+            for record in live {
+                referred.formUnion(record.chunks.map { SessionRecord.storedName(chunk: $0, session: record.syncId) })
+                referred.formUnion([record.manifest, record.docs].compactMap { $0 }.map(SessionRecord.storedName(blob:)))
+            }
+            let manifests = Set(live.compactMap(\.manifest))
+            try await withThrowingTaskGroup(of: FileManifest.self) { group in
+                var waiting = manifests.makeIterator()
+                func readNext() {
+                    guard let hash = waiting.next() else { return }
+                    group.addTask { try JSONDecoder().decode(FileManifest.self, from: try await cloud.blob(hash)) }
+                }
+                for _ in 0..<WorkspaceFiles.concurrency { readNext() }
+                while let manifest = try await group.next() {
+                    referred.formUnion(manifest.files.values.map { SessionRecord.storedName(blob: $0.hash) })
+                    readNext()
+                }
+            }
+            let now = Date.now
+            let before = saved.unreferred ?? [:]
+            var unreferred: [String: Date] = [:]
+            var gone: [String] = []
+            for name in try await cloud.stored() where !referred.contains(name) {
+                if let since = before[name], now.timeIntervalSince(since) >= every { gone.append(name) } else { unreferred[name] = before[name] ?? now }
+            }
+            if !gone.isEmpty { try await cloud.delete(stored: gone) }
+            saved.unreferred = unreferred
+            saved.lastSwept = now
+            log("sync", "swept iCloud: deleted \(gone.count) chunks and files no session refers to, \(unreferred.count) to go if none does by the next")
+        } catch {
+            log("sync", "sweep failed: \(Self.describe(error))")
         }
     }
 
@@ -565,9 +642,11 @@ final class SessionSync {
         let sessions = app?.sessions ?? []
         let waiting = sessions.filter { $0.heldBy == nil && ($0.syncId == nil || saved.dirty.contains($0.id)) && !$0.running }.count
         let behind = records.values.filter { !$0.deleted && !mine($0.holder) && saved.applied[$0.syncId]?.tag != $0.tag }.count
-        if let failure, waiting + behind > 0 { return .waiting(failure) }
+        let deleting = saved.deleting?.count ?? 0
+        if let failure, waiting + behind + deleting > 0 { return .waiting(failure) }
         if waiting > 0 { return .waiting("\(waiting) \(waiting == 1 ? "session" : "sessions") to send") }
         if behind > 0 { return .waiting("\(behind) \(behind == 1 ? "session" : "sessions") to bring up to date") }
+        if deleting > 0 { return .waiting("\(deleting) deleted \(deleting == 1 ? "session" : "sessions") to delete in iCloud") }
         return .synced(lastSynced)
     }
 

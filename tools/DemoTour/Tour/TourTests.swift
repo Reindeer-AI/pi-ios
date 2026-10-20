@@ -3131,10 +3131,11 @@ final class TourTests: XCTestCase {
 
     // MARK: - Session sync (two simulators, SYNC_FOLDER standing in for iCloud; scripts/test-session-sync.sh runs the steps)
 
-    /// pi as one of the user's devices, syncing through SYNC_FOLDER.
+    /// pi as one of the user's devices, syncing through SYNC_FOLDER (sweeping it at every sync).
     private func launchSyncing(as device: String) throws {
         let folder = try XCTUnwrap(ProcessInfo.processInfo.environment["SYNC_FOLDER"], "SYNC_FOLDER")
-        pi.launchArguments += ["-syncFolder", folder, "-syncDeviceName", device, "-syncInterval", "3", "-setDefaultModel", "network:sync-test"]
+        pi.launchArguments += ["-syncFolder", folder, "-syncDeviceName", device, "-syncInterval", "3", "-syncSweepEvery", "0",
+                               "-setDefaultModel", "network:sync-test"]
         launchReady()
     }
 
@@ -3258,6 +3259,38 @@ final class TourTests: XCTestCase {
         pause(1)
         XCTAssertTrue(element(containing: "written on the Mac").waitForExistence(timeout: 10), "the Mac's work")
         XCTAssertFalse(element(containing: "written offline").exists, "not the offline work")
+    }
+
+    /// Step 7, on the "iPhone": it deletes the Mac's session with sync off; syncing again, the deletion goes to iCloud,
+    /// and the session doesn't come back meanwhile.
+    func testSyncDelete() throws {
+        try launchSyncing(as: "iPhone")
+        pi.terminate()
+        pi.launchArguments += ["-syncSessions", "NO"]
+        launchReady()
+        let row = element(containing: "On Mac")
+        XCTAssertTrue(row.waitForExistence(timeout: 20), "the Mac's session")
+        row.swipeLeft()
+        tap(pi.buttons["Delete"].firstMatch)
+        XCTAssertTrue(row.waitForNonExistence(timeout: 10), "deleted here")
+        pi.terminate()
+        pi.launchArguments.removeLast(2)
+        launchReady()
+        pause(3)
+        waitAllSynced("the deletion is in iCloud")
+        pause(6)
+        XCTAssertFalse(element(containing: "On Mac").exists, "it didn't come back")
+        XCTAssertTrue(element(containing: "(iPhone)").exists, "the iPhone's own session")
+    }
+
+    /// Step 8, on the "Mac": the session deleted on the iPhone is gone here too; the iPhone's own is here.
+    func testSyncDeleted() throws {
+        try launchSyncing(as: "Mac")
+        let deleted = pi.buttons.matching(NSPredicate(format: "label BEGINSWITH %@", "New session,")).firstMatch
+        XCTAssertTrue(deleted.waitForNonExistence(timeout: 45), "the deleted session")
+        XCTAssertTrue(element(containing: "(iPhone)").waitForExistence(timeout: 10), "the iPhone's session")
+        // Sweeps (at every sync here) delete what only the deleted session referred to.
+        pause(12)
     }
 
     private func launchReady() {

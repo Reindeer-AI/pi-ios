@@ -4,12 +4,15 @@ import Foundation
 /// (`FolderSessionCloud`, for tests: two simulators sharing one folder are two devices). Per session it holds a record
 /// (its details, which device has it, how many of its entries are there and in which chunks, its files' manifest), its
 /// entries in chunks, and file contents by SHA-256, which every session shares (the manifest and settings are files
-/// too). Nothing there is ever changed in place except records, and those only by compare-and-swap.
+/// too). Nothing there is ever changed in place except records, and those only by compare-and-swap. A deleted session's
+/// record stays, emptied (so a device that was offline deletes its copy too); chunks and files no session refers to go
+/// in `SessionSync`'s sweep.
 protocol SessionCloud: Sendable {
     /// Why sessions can't sync now (not signed in to iCloud, say), or nil when they can.
     func unavailableReason() async -> String?
-    /// The records changed since `token` (all of them for nil), and the token to ask with next time.
-    func changes(since token: Data?) async throws -> (records: [SessionRecord], token: Data?)
+    /// The records changed since `token` (all of them for nil), and the token to ask with next time; `complete`: none
+    /// failed to read (else the token stays, so they come again).
+    func changes(since token: Data?) async throws -> (records: [SessionRecord], token: Data?, complete: Bool)
     /// One session's record as it is now, if there is one.
     func record(_ syncId: String) async throws -> SessionRecord?
     /// Saves `record` if the cloud's is still the one it was read as (`record.tag`; nil: there must be none yet). On a
@@ -17,11 +20,19 @@ protocol SessionCloud: Sendable {
     func save(_ record: SessionRecord) async throws -> SessionSave
     func putChunk(_ data: Data, named name: String, session: String) async throws
     func chunk(named name: String, session: String) async throws -> Data?
-    func deleteChunks(named names: [String], session: String) async throws
     /// Of these SHA-256 hashes, the ones whose contents the cloud doesn't have.
     func missingBlobs(_ hashes: [String]) async throws -> Set<String>
     func putBlob(_ hash: String, file: URL) async throws
     func blob(_ hash: String) async throws -> Data
+    /// Every chunk and blob the cloud has (`SessionRecord.storedName`), and deleting some.
+    func stored() async throws -> [String]
+    func delete(stored names: [String]) async throws
+}
+
+extension SessionCloud {
+    func deleteChunks(named names: [String], session: String) async throws {
+        try await delete(stored: names.map { SessionRecord.storedName(chunk: $0, session: session) })
+    }
 }
 
 enum SessionSave: Sendable {
@@ -62,6 +73,32 @@ struct SessionRecord: Codable, Sendable, Equatable {
     /// A chunk's name: where its entries start, and the device that sent it (two devices never write the same chunk).
     static func chunkName(from: Int, device: String) -> String { "\(from).\(device.prefix(8))" }
     static func chunkStart(_ name: String) -> Int { Int(name.prefix { $0 != "." }) ?? 0 }
+
+    /// A chunk's or a blob's name among everything the cloud has (`SessionCloud.stored`).
+    static func storedName(chunk name: String, session: String) -> String { "chunk.\(session).\(name)" }
+    static func storedName(blob hash: String) -> String { "blob.\(hash)" }
+
+    /// A deleted session's record, with nothing of the session left in it but its id.
+    mutating func empty() {
+        deleted = true
+        running = false
+        title = ""
+        createdAt = 0
+        lastActiveAt = nil
+        model = nil
+        thinkingLevel = nil
+        holder = ""
+        holderName = ""
+        count = 0
+        chunks = []
+        manifest = nil
+        docs = nil
+        updatedAt = .now
+    }
+
+    var emptied: Bool {
+        title.isEmpty && holder.isEmpty && holderName.isEmpty && model == nil && chunks.isEmpty && manifest == nil && docs == nil
+    }
 }
 
 /// A folder as the cloud, for tests (`-syncFolder PATH`): `records/<id>.json`, `chunks/<id>/<name>`, `blobs/<hash>`. A
@@ -97,17 +134,21 @@ final class FolderSessionCloud: SessionCloud {
         return record
     }
 
-    func changes(since token: Data?) async throws -> (records: [SessionRecord], token: Data?) {
+    func changes(since token: Data?) async throws -> (records: [SessionRecord], token: Data?, complete: Bool) {
         let seen = token.flatMap { try? JSONDecoder().decode([String: Int].self, from: $0) } ?? [:]
         var versions: [String: Int] = [:]
         var changed: [SessionRecord] = []
         let files = (try? FileManager.default.contentsOfDirectory(at: root.appending(path: "records"), includingPropertiesForKeys: nil)) ?? []
+        var complete = true
         for file in files where file.pathExtension == "json" {
-            guard let stored = read(file) else { continue }
+            guard let stored = read(file) else {
+                complete = false
+                continue
+            }
             versions[stored.record.syncId] = stored.version
             if seen[stored.record.syncId] != stored.version { changed.append(tagged(stored)) }
         }
-        return (changed, try JSONEncoder().encode(versions))
+        return (changed, complete ? try JSONEncoder().encode(versions) : token, complete)
     }
 
     func record(_ syncId: String) async throws -> SessionRecord? {
@@ -147,9 +188,6 @@ final class FolderSessionCloud: SessionCloud {
         try? Data(contentsOf: root.appending(path: "chunks/\(session)/\(name)"))
     }
 
-    func deleteChunks(named names: [String], session: String) async throws {
-        for name in names { try? FileManager.default.removeItem(at: root.appending(path: "chunks/\(session)/\(name)")) }
-    }
 
     func missingBlobs(_ hashes: [String]) async throws -> Set<String> {
         Set(hashes.filter { !FileManager.default.fileExists(atPath: root.appending(path: "blobs/\($0)").path) })
@@ -165,6 +203,29 @@ final class FolderSessionCloud: SessionCloud {
     func blob(_ hash: String) async throws -> Data {
         guard let data = try? Data(contentsOf: root.appending(path: "blobs/\(hash)")) else { throw SyncError.message("A file isn't in the sync folder yet") }
         return data
+    }
+
+    private func names(in folder: String) -> [String] {
+        ((try? FileManager.default.contentsOfDirectory(atPath: root.appending(path: folder).path)) ?? []).filter { !$0.hasPrefix(".") }
+    }
+
+    func stored() async throws -> [String] {
+        names(in: "blobs").map(SessionRecord.storedName(blob:))
+            + names(in: "chunks").flatMap { session in names(in: "chunks/\(session)").map { SessionRecord.storedName(chunk: $0, session: session) } }
+    }
+
+    func delete(stored names: [String]) async throws {
+        for name in names {
+            var path: String?
+            if name.hasPrefix("blob.") {
+                path = "blobs/\(name.dropFirst(5))"
+            } else if name.hasPrefix("chunk.") {
+                // chunk.<session>.<name>: a session's id has no dots.
+                let rest = name.dropFirst(6)
+                if let dot = rest.firstIndex(of: ".") { path = "chunks/\(rest[..<dot])/\(rest[rest.index(after: dot)...])" }
+            }
+            if let path { try? FileManager.default.removeItem(at: root.appending(path: path)) }
+        }
     }
 }
 
