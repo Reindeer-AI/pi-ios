@@ -230,6 +230,7 @@ private struct SessionsView: View {
                         .onSubmit(openAddress)
                 }
                 if app.sync.active { SyncSummaryRow(sync: app.sync) }
+                if let version = app.macUpdate.ready { MacUpdateRow(update: app.macUpdate, version: version) }
             }
             ForEach(app.sessions) { session in
                 NavigationLink(value: session.id) {

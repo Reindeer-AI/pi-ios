@@ -290,6 +290,7 @@ final class AppModel {
     @ObservationIgnored lazy var watchCompanion = WatchCompanion(app: self, storage: storage)
     /// Sessions on the user's other devices, through iCloud.
     let sync = SessionSync()
+    let macUpdate = MacUpdate()
 
     private(set) var phase: Phase = .starting
     /// The app's model, for Shortcuts' actions (`Shortcuts.swift`).
@@ -669,6 +670,7 @@ final class AppModel {
             // The store opened with the network models of the last launch; the endpoint's current list follows.
             Task { await refreshNetworkModels() }
             sync.start(self, storage: storage)
+            macUpdate.start()
         } catch {
             fail(error.localizedDescription)
         }
