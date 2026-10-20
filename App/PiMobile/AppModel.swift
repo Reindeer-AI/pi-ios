@@ -655,7 +655,7 @@ final class AppModel {
                 session.heldBy = meta.heldBy
                 session.loaded = false
                 return session
-            }.sorted { $0.createdAt > $1.createdAt }
+            }.sorted(by: Self.recentFirst)
             log("open", "\(sessions.count) sessions")
             saveSessionList()
             // Extensions load and unfinished runs resume after this (`sessions_resumed`); what needs them waits for it.
@@ -1221,7 +1221,7 @@ final class AppModel {
         guard let data = try? Data(contentsOf: sessionListFile),
               let list = try? JSONSerialization.jsonObject(with: data) as? [[String: Any]]
         else { return }
-        sessions = list.compactMap(Self.session(from:)).sorted { $0.createdAt > $1.createdAt }
+        sessions = list.compactMap(Self.session(from:)).sorted(by: Self.recentFirst)
         for meta in list {
             if let id = meta["id"] as? Int, let subtitle = meta["subtitle"] as? String { savedSubtitles[id] = subtitle }
         }
@@ -1853,6 +1853,11 @@ final class AppModel {
         sessions.first { $0.id == id }
     }
 
+    /// The sessions list's order: the latest message first (a session without one by when it was made).
+    private static func recentFirst(_ a: Session, _ b: Session) -> Bool {
+        (a.lastActive, a.createdAt) > (b.lastActive, b.createdAt)
+    }
+
     private static func session(from meta: [String: Any]) -> Session? {
         guard let id = meta["id"] as? Int else { return nil }
         let model = meta["model"] as? [String: Any] ?? [:]
@@ -2066,6 +2071,8 @@ final class AppModel {
             // A session the engine made (an extension's fork); one the app asked for is already listed.
             if let session = Self.session(from: event["session"] as? [String: Any] ?? [:]), index(of: session.id) == nil {
                 sessions.insert(session, at: 0)
+                // One from another device goes where its last message puts it.
+                sessions.sort(by: Self.recentFirst)
                 saveSessionList()
             }
         case "session_updated":
@@ -2073,12 +2080,14 @@ final class AppModel {
             if let updated = Self.session(from: meta), let index = index(of: updated.id) {
                 // A new title or model goes to the user's other devices.
                 let changed = sessions[index].title != updated.title || sessions[index].model != updated.model
+                let moved = sessions[index].lastActive != updated.lastActive
                 sessions[index].title = updated.title
                 sessions[index].model = updated.model
                 sessions[index].browser = updated.browser
                 sessions[index].lastActive = updated.lastActive
                 sessions[index].syncId = updated.syncId
                 sessions[index].heldBy = updated.heldBy
+                if moved { sessions.sort(by: Self.recentFirst) }
                 saveSessionList()
                 if changed { sync.changed(updated.id) }
             }

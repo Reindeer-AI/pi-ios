@@ -16,6 +16,8 @@ struct FileManifest: Codable, Equatable, Sendable {
 /// caches, which the other device makes again), and so do files too large to send.
 enum WorkspaceFiles {
     static let leftBehind: Set<String> = [".python", "node_modules", "__pycache__", ".cache"]
+    /// Files sent or received at once.
+    static let concurrency = 8
     static let largest = 100 * 1024 * 1024
 
     /// A file as last hashed: its hash holds while its size and modification date do.
@@ -63,17 +65,29 @@ enum WorkspaceFiles {
 
     /// Makes the workspace hold what `manifest` lists: new and changed files written (their contents by hash from
     /// `contents`), files it doesn't list deleted (what stays behind aside).
-    static func apply(_ manifest: FileManifest, to workspace: URL, known: inout [String: Known], contents: @Sendable (String) async throws -> Data) async throws {
+    static func apply(_ manifest: FileManifest, to workspace: URL, known: inout [String: Known],
+                      contents: @escaping @Sendable (String) async throws -> Data) async throws {
         let (here, _) = scan(workspace, known: &known)
-        for (path, file) in manifest.files where here.files[path]?.hash != file.hash {
-            // Only paths inside the workspace.
-            guard !path.hasPrefix("/"), !path.split(separator: "/").contains("..") else { continue }
-            let data = try await contents(file.hash)
-            let target = workspace.appending(path: path)
-            try FileManager.default.createDirectory(at: target.deletingLastPathComponent(), withIntermediateDirectories: true)
-            try data.write(to: target, options: .atomic)
-            let modified = (try? target.resourceValues(forKeys: [.contentModificationDateKey]))?.contentModificationDate?.timeIntervalSince1970 ?? 0
-            known[path] = Known(size: data.count, modified: modified, hash: file.hash)
+        // Only paths inside the workspace.
+        let changed = manifest.files.filter { path, file in
+            here.files[path]?.hash != file.hash && !path.hasPrefix("/") && !path.split(separator: "/").contains("..")
+        }
+        try await withThrowingTaskGroup(of: (path: String, hash: String, data: Data).self) { group in
+            // A few at a time: each is a round trip to iCloud.
+            var waiting = changed.makeIterator()
+            func fetchNext() {
+                guard let (path, file) = waiting.next() else { return }
+                group.addTask { (path, file.hash, try await contents(file.hash)) }
+            }
+            for _ in 0..<concurrency { fetchNext() }
+            while let (path, hash, data) = try await group.next() {
+                let target = workspace.appending(path: path)
+                try FileManager.default.createDirectory(at: target.deletingLastPathComponent(), withIntermediateDirectories: true)
+                try data.write(to: target, options: .atomic)
+                let modified = (try? target.resourceValues(forKeys: [.contentModificationDateKey]))?.contentModificationDate?.timeIntervalSince1970 ?? 0
+                known[path] = Known(size: data.count, modified: modified, hash: hash)
+                fetchNext()
+            }
         }
         for path in here.files.keys where manifest.files[path] == nil {
             try? FileManager.default.removeItem(at: workspace.appending(path: path))

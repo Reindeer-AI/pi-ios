@@ -47,7 +47,9 @@ final class SessionSync {
         didSet { UserDefaults.standard.set(deviceName, forKey: Self.nameKey) }
     }
     let deviceKind: String
-    let deviceID: String
+    /// This device in iCloud's records (`SessionRecord.holder`), kept from its first sync on (`Saved.device`): iOS gives
+    /// identifierForVendor only once the device has been unlocked since it started, and pi can start before that.
+    var deviceID: String { saved.device ?? "" }
 
     /// Why sessions can't sync (no iCloud account, a build without iCloud), or nil.
     private(set) var unavailable: String?
@@ -81,6 +83,10 @@ final class SessionSync {
         /// How far this device brought another device's session (by sync id).
         var applied: [String: Applied] = [:]
         var lastSynced: Date?
+        /// This device (`deviceID`). Not in backups (`persist`): a device restored from this one is a device of its own.
+        var device: String?
+        /// An id an earlier build made up for this device when iOS hadn't given one: the sessions it sent are this device's.
+        var former: String?
 
         struct Applied: Codable {
             var count: Int
@@ -97,12 +103,6 @@ final class SessionSync {
         enabled = defaults.object(forKey: Self.enabledKey) == nil || defaults.bool(forKey: Self.enabledKey)
         deviceKind = ProcessInfo.processInfo.isiOSAppOnMac ? "Mac" : UIDevice.current.userInterfaceIdiom == .pad ? "iPad" : "iPhone"
         deviceName = defaults.string(forKey: Self.nameKey) ?? deviceKind
-        // Not restored from a backup onto another device, unlike a value in UserDefaults.
-        deviceID = UIDevice.current.identifierForVendor?.uuidString ?? {
-            let stored = defaults.string(forKey: "syncDeviceID") ?? UUID().uuidString
-            defaults.set(stored, forKey: "syncDeviceID")
-            return stored
-        }()
         if let folder = defaults.string(forKey: "syncFolder") {
             cloud = FolderSessionCloud(root: URL(fileURLWithPath: folder))
         } else if let container = Bundle.main.object(forInfoDictionaryKey: "PiSyncContainer") as? String, container.hasPrefix("iCloud.") {
@@ -155,8 +155,29 @@ final class SessionSync {
     private func persist() {
         saved.records = records
         saved.lastSynced = lastSynced
-        guard let stateFile, let data = try? JSONEncoder().encode(saved) else { return }
+        guard var stateFile, let data = try? JSONEncoder().encode(saved) else { return }
         try? data.write(to: stateFile, options: .atomic)
+        var values = URLResourceValues()
+        values.isExcludedFromBackup = true
+        try? stateFile.setResourceValues(values)
+    }
+
+    /// Whether this device has its id yet: from identifierForVendor at its first sync, kept from then on. Before, with
+    /// pi started ahead of the device's first unlock, an id made up for the moment made this device's own sessions look
+    /// like another device's, and the ones with something unsent split.
+    private func identify() -> Bool {
+        if saved.device == nil, let id = UIDevice.current.identifierForVendor?.uuidString {
+            saved.device = id
+            if let made = UserDefaults.standard.string(forKey: "syncDeviceID"), made != id { saved.former = made }
+            UserDefaults.standard.removeObject(forKey: "syncDeviceID")
+            persist()
+        }
+        return saved.device != nil
+    }
+
+    /// Whether this device has the session in iCloud (`SessionRecord.holder`).
+    private func mine(_ holder: String) -> Bool {
+        !holder.isEmpty && (holder == deviceID || holder == saved.former)
     }
 
     /// A session here has something to send (an entry, a new title or model): sent once it isn't running.
@@ -168,10 +189,10 @@ final class SessionSync {
 
     /// A run started here: the other devices show that it's running.
     func runStarted(_ id: Int) {
-        guard active, let syncId = app?.session(id)?.syncId, let known = records[syncId], known.holder == deviceID, !known.running else { return }
+        guard active, let syncId = app?.session(id)?.syncId, let known = records[syncId], mine(known.holder), !known.running else { return }
         Task {
             await serialized {
-                guard let cloud, var record = records[syncId], record.holder == deviceID else { return }
+                guard let cloud, var record = records[syncId], mine(record.holder) else { return }
                 record.running = true
                 record.updatedAt = .now
                 if case .saved(let stored) = try? await cloud.save(record) { records[syncId] = stored }
@@ -208,6 +229,10 @@ final class SessionSync {
 
     private func cycle() async {
         guard active, let cloud, let app else { return }
+        guard identify() else {
+            unavailable = "Syncs once this \(deviceKind) has been unlocked"
+            return
+        }
         if let reason = await cloud.unavailableReason() {
             unavailable = reason
             return
@@ -251,7 +276,7 @@ final class SessionSync {
         // After its run: its files may be changing until then.
         guard !session.running else { return }
         var record = session.syncId.flatMap { records[$0] }
-        if let record, record.holder != deviceID { return }
+        if let record, !mine(record.holder) { return }
         activity[id] = .uploading
         var more = true
         while more {
@@ -262,7 +287,7 @@ final class SessionSync {
             more = export["more"] as? Bool ?? false
             if record == nil { record = try await cloud.record(syncId) }
             // Another device has it now: the next pull keeps what this device added in a session of its own.
-            if let record, record.holder != deviceID || record.deleted { return }
+            if let record, !mine(record.holder) || record.deleted { return }
             var next = record ?? SessionRecord(syncId: syncId, title: "", createdAt: 0, holder: deviceID, holderName: deviceName, count: 0,
                                                chunks: [], running: false, deleted: false, updatedAt: .now)
             var chunk: String?
@@ -299,7 +324,7 @@ final class SessionSync {
             case .conflict(let theirs):
                 records[syncId] = theirs
                 if let chunk { try? await cloud.deleteChunks(named: [chunk], session: syncId) }
-                if theirs.holder != deviceID || theirs.deleted { return }
+                if !mine(theirs.holder) || theirs.deleted { return }
                 throw SyncError.message("iCloud's copy changed while sending")
             }
             if !ids.isEmpty { _ = try await command("replica.uploaded", ["id": id, "ids": ids]) }
@@ -318,9 +343,16 @@ final class SessionSync {
         if !skipped.isEmpty { log("sync", "[\(id)] too large to send: \(skipped.joined(separator: ", "))") }
         guard !manifest.files.isEmpty else { return nil }
         let byHash = Dictionary(manifest.files.map { ($0.value.hash, $0.key) }, uniquingKeysWith: { first, _ in first })
-        for hash in try await cloud.missingBlobs(Array(byHash.keys)) {
-            guard let path = byHash[hash] else { continue }
-            try await cloud.putBlob(hash, file: workspace.appending(path: path))
+        let missing = try await cloud.missingBlobs(Array(byHash.keys)).compactMap { hash in byHash[hash].map { (hash, workspace.appending(path: $0)) } }
+        try await withThrowingTaskGroup(of: Void.self) { group in
+            // A few at a time: each is a round trip to iCloud.
+            var waiting = missing.makeIterator()
+            func sendNext() {
+                guard let (hash, file) = waiting.next() else { return }
+                group.addTask { try await cloud.putBlob(hash, file: file) }
+            }
+            for _ in 0..<WorkspaceFiles.concurrency { sendNext() }
+            while try await group.next() != nil { sendNext() }
         }
         return try await putBlob(try JSONEncoder.sorted.encode(manifest), cloud: cloud)
     }
@@ -361,7 +393,7 @@ final class SessionSync {
             return
         }
         // This device has it (as iCloud says): it sends, it doesn't receive.
-        if record.holder == deviceID {
+        if mine(record.holder) {
             if let local, local.heldBy != nil { _ = try await command("replica.setHolder", ["id": local.id, "heldBy": NSNull()]) }
             return
         }
@@ -440,6 +472,8 @@ final class SessionSync {
         }
         applied.tag = record.tag
         saved.applied[syncId] = applied
+        // Kept as it goes: a first sync can take a while, and pi may stop before it ends.
+        persist()
         log("sync", "[\(localId)] up to date with \(record.holderName): \(count) entries")
     }
 
@@ -456,7 +490,7 @@ final class SessionSync {
                 guard var record = try await cloud.record(syncId) else { throw SyncError.message("This session isn't in iCloud") }
                 records[syncId] = record
                 if record.deleted { throw SyncError.message("This session was deleted on another device") }
-                if record.holder == deviceID { break }
+                if mine(record.holder) { break }
                 from = record.holderName
                 try await download(record, cloud: cloud)
                 record.holder = deviceID
@@ -530,7 +564,7 @@ final class SessionSync {
         if syncing, !activity.isEmpty { return .syncing }
         let sessions = app?.sessions ?? []
         let waiting = sessions.filter { $0.heldBy == nil && ($0.syncId == nil || saved.dirty.contains($0.id)) && !$0.running }.count
-        let behind = records.values.filter { !$0.deleted && $0.holder != deviceID && saved.applied[$0.syncId]?.tag != $0.tag }.count
+        let behind = records.values.filter { !$0.deleted && !mine($0.holder) && saved.applied[$0.syncId]?.tag != $0.tag }.count
         if let failure, waiting + behind > 0 { return .waiting(failure) }
         if waiting > 0 { return .waiting("\(waiting) \(waiting == 1 ? "session" : "sessions") to send") }
         if behind > 0 { return .waiting("\(behind) \(behind == 1 ? "session" : "sessions") to bring up to date") }
