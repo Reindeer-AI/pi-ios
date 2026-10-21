@@ -447,7 +447,7 @@ const toolName = (server: string, tool: string) => `mcp__${safe(server).replace(
 
 function result(server: Server, tool: string, outcome: CallToolResult) {
 	const content = toLlmContent(outcome);
-	return { content: content.length ? content : [{ type: "text" as const, text: `${server.config.name}.${tool}: no content` }], isError: outcome.isError === true };
+	return { output: content.length ? content : [{ type: "text" as const, text: `${server.config.name}.${tool}: no content` }], isError: outcome.isError === true };
 }
 
 function directTool(server: Server, tool: ToolInfo) {
@@ -489,7 +489,7 @@ const searchTools = defineTool({
 				if (words.every((word) => text.includes(word))) found.push({ server: server.config.name, tool });
 			}
 		}
-		if (!found.length) return { content: [{ type: "text", text: "No matching tools." }] };
+		if (!found.length) return { output: [{ type: "text", text: "No matching tools." }] };
 		const withSchemas = found.length <= 8;
 		const text = found
 			.slice(0, 40)
@@ -498,7 +498,7 @@ const searchTools = defineTool({
 			)
 			.join("\n");
 		const more = found.length > 40 ? `\n… ${found.length - 40} more: narrow the query` : withSchemas ? "" : "\n(Search with fewer matches to see parameters.)";
-		return { content: [{ type: "text", text: text + more }] };
+		return { output: [{ type: "text", text: text + more }] };
 	},
 });
 

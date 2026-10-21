@@ -41,8 +41,11 @@ test("a failed session metadata write rolls back the conversation on reopen", as
 			WHEN json_extract(NEW.record, '$.kind') = 'pimobile.sessions'
 			BEGIN SELECT RAISE(ABORT, 'interrupted commit'); END`);
 		await assert.rejects(createSession(state.root, options, context), /interrupted commit/);
-		await state.database.exec("DROP TRIGGER fail_session");
-		await state.harness.close(context);
+		// The storage error closed the store (pi-durable 1.2); the app's engine opens it again.
+		assert.equal((await state.harness.closed).reason, "failed");
+		const database = await openNodeSqliteDatabase(join(directory, "sessions.sqlite"));
+		await database.exec("DROP TRIGGER fail_session");
+		await database.close();
 		state = await open(directory);
 		assert.equal((await state.harness.snapshot(SessionsDoc, state.root.id, context))?.sessions.length ?? 0, 0);
 		const page = await state.storage.scanConversations({}, 100, undefined, context);

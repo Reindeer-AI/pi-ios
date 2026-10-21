@@ -381,7 +381,7 @@ const run = defineTool({
 		const note = stopped ? ` (${stopped})` : "";
 		const other = args.size && lease.size && args.size !== lease.size ? ` This session's box is ${lease.size}: crabbox_release it first to run on a ${args.size} machine.` : "";
 		return {
-			content: [{ type: "text", text: `${tail(output)}\n[exit code ${exitCode}${note} on Crabbox box ${lease.host} (${lease.size ?? "standard"}), ${lease.root}]${other}` }],
+			output: [{ type: "text", text: `${tail(output)}\n[exit code ${exitCode}${note} on Crabbox box ${lease.host} (${lease.size ?? "standard"}), ${lease.root}]${other}` }],
 			isError: exitCode !== 0,
 		};
 	},
@@ -410,7 +410,7 @@ const pull = defineTool({
 		if (packed.exitCode !== 0) throw new Error(`could not pack ${path} on the box: ${errors.trim() || `exit ${packed.exitCode}`}`);
 		const unpacked = await env.exec("tar xzf .crabbox/pull.tgz -C . && rm .crabbox/pull.tgz", { cwd: env.cwd }, context);
 		if (!unpacked.ok || unpacked.value.exitCode !== 0) throw new Error(`could not unpack ${path} into the workspace`);
-		return { content: [{ type: "text", text: `Copied ${path} from the box into the workspace.` }] };
+		return { output: [{ type: "text", text: `Copied ${path} from the box into the workspace.` }] };
 	},
 });
 
@@ -420,10 +420,10 @@ const release = defineTool({
 	parameters: Type.Object({}),
 	execute: async (_args, api) => {
 		const lease = await readLease(api);
-		if (!lease) return { content: [{ type: "text", text: "This session has no Crabbox box." }] };
+		if (!lease) return { output: [{ type: "text", text: "This session has no Crabbox box." }] };
 		await releaseLease(lease);
 		await writeLease(api, null);
-		return { content: [{ type: "text", text: `Released Crabbox lease ${lease.id}.` }] };
+		return { output: [{ type: "text", text: `Released Crabbox lease ${lease.id}.` }] };
 	},
 });
 
@@ -434,10 +434,10 @@ const status = defineTool({
 	replay: "safe",
 	execute: async (_args, api) => {
 		const lease = await readLease(api);
-		if (!lease?.host) return { content: [{ type: "text", text: "This session has no Crabbox box; crabbox_run leases one." }] };
+		if (!lease?.host) return { output: [{ type: "text", text: "This session has no Crabbox box; crabbox_run leases one." }] };
 		const { lease: current } = await broker<{ lease: BrokerLease }>("GET", `/v1/leases/${encodeURIComponent(lease.id)}`);
 		return {
-			content: [
+			output: [
 				{
 					type: "text",
 					text: `Lease ${lease.id}: ${current.state}, a ${lease.size ?? "standard"} box on ${current.provider ?? lease.provider} (${lease.user}@${lease.host}), workspace copy ${lease.root}, expires ${current.expiresAt ?? lease.expiresAt}.`,

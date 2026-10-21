@@ -44,7 +44,7 @@ const api = defineTool({
 		}
 		const text = typeof reply.body === "string" ? reply.body : JSON.stringify(reply.body, null, 1);
 		const shown = text.length > 60_000 ? `${text.slice(0, 60_000)}\n… (${text.length - 60_000} more characters; ask for less, with per_page or a narrower path)` : text;
-		return { content: [{ type: "text", text: `${method} ${args.path} → ${reply.status}\n${shown}` }], isError: reply.status >= 400 };
+		return { output: [{ type: "text", text: `${method} ${args.path} → ${reply.status}\n${shown}` }], isError: reply.status >= 400 };
 	},
 });
 

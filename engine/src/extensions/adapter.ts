@@ -893,10 +893,10 @@ class PiExtension implements Adapted {
 					| string
 					| undefined;
 				// A vault value the extension was given never reaches the model through its result.
-				if (typeof result === "string") return { content: [{ type: "text", text: redact(result) }] };
+				if (typeof result === "string") return { output: [{ type: "text", text: redact(result) }] };
 				const content = contentOf(result?.content).map((part) => (part.type === "text" ? { ...part, text: redact(part.text) } : part));
 				const details = json(result?.details ?? null);
-				return { content, details: JSON.parse(redact(JSON.stringify(details))), isError: result?.isError === true };
+				return { output: content, details: JSON.parse(redact(JSON.stringify(details))), isError: result?.isError === true };
 			},
 		});
 	}
@@ -947,7 +947,7 @@ class PiExtension implements Adapted {
 					toolCallId: call.id,
 					toolName: call.name,
 					input: call.arguments,
-					content: result.content ?? [],
+					content: result.output ?? [],
 					details: result.details as unknown,
 					isError: result.isError === true,
 				};
@@ -960,12 +960,12 @@ class PiExtension implements Adapted {
 						changed ||= change.content !== undefined || change.details !== undefined || change.isError !== undefined;
 					},
 				});
-				const final = changed ? { ...result, content: contentOf(event.content), details: json(event.details ?? null), isError: event.isError } : result;
+				const final = changed ? { ...result, output: contentOf(event.content), details: json(event.details ?? null), isError: event.isError } : result;
 				await this.call(instance, "tool_execution_end", {
 					type: "tool_execution_end",
 					toolCallId: call.id,
 					toolName: call.name,
-					result: { content: final.content ?? [], details: final.details },
+					result: { content: final.output ?? [], details: final.details },
 					isError: final.isError === true,
 				});
 				return changed ? final : undefined;
@@ -1297,9 +1297,12 @@ class PiExtension implements Adapted {
 			skills: [],
 		};
 		let base = systemPrompt;
+		// A user's prompt (pi 1.2 also starts runs from an extension's custom message, which this app doesn't).
 		const event = {
 			type: "before_agent_start",
+			messageType: "user",
 			prompt: input.text,
+			images: [],
 			get systemPrompt() {
 				return withPromptOptions(base, options);
 			},

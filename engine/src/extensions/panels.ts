@@ -176,7 +176,7 @@ export const PanelTools = defineExtension({
 				html: Type.String({ description: "A complete HTML document" }),
 			}),
 			replay: "safe",
-			execute: async (args) => ({ content: [{ type: "text", text: `Shown to the user: ${args.title}` }] }),
+			execute: async (args) => ({ output: [{ type: "text", text: `Shown to the user: ${args.title}` }] }),
 		}),
 	],
 });

@@ -52,3 +52,4 @@ PiWatchLink/.build/
 App/PiMobile-trimmed.xcodeproj/
 
 PiWidgetLayout/.build/
+tools/model-mock/requests.jsonl

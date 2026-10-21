@@ -2199,6 +2199,10 @@ final class AppModel {
         case "apps_changed":
             let ids = (event["sessionId"] as? Int).map { [$0] } ?? Array(apps.keys)
             Task { for id in ids where apps[id] != nil { await loadApps(id) } }
+        case "store_failed":
+            // A storage error closed the engine's store: a new engine opens it again.
+            log("engine", "the store closed after a storage error; restarting")
+            Task { await restartEngine() }
         case "sessions_resumed":
             let resumed = event["resumed"] as? [[String: Any]] ?? []
             for run in resumed {

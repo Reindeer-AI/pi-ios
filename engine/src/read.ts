@@ -27,7 +27,7 @@ function readWithImages(): ToolRegistration {
 			const prepared = await request<Prepared>("images", "prepare", { path, maxPixels: 2048 });
 			const scaled = prepared.width !== prepared.originalWidth ? `, shown at ${prepared.width}×${prepared.height}` : "";
 			return {
-				content: [
+				output: [
 					{ type: "text", text: `${args.path}: an image, ${prepared.originalWidth}×${prepared.originalHeight}${scaled}.` },
 					{ type: "image", data: prepared.data, mimeType: prepared.mimeType },
 				],

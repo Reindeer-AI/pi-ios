@@ -552,7 +552,7 @@ export class Extensions {
 						const sessionId = sessionOf(api);
 						// Code from the internet runs only once the user agrees (the app asks); a path is the session's own.
 						if (remoteSource(args.source) && !(await request<boolean>("consent", "addExtension", { source: args.source, scope }))) {
-							return { content: [{ type: "text", text: `The user didn't allow adding ${args.source}.` }], isError: true };
+							return { output: [{ type: "text", text: `The user didn't allow adding ${args.source}.` }], isError: true };
 						}
 						const record = await this.fetch(args.source, envOf(api), scope, this.sessionEnv(sessionId).cwd);
 						const loaded = await this.load(record, scope, sessionId);
@@ -564,7 +564,7 @@ export class Extensions {
 								await this.select(tx, sessionId);
 							}
 						}, context);
-						return { content: [{ type: "text", text: `Added ${describe(loaded, scope)}` }] };
+						return { output: [{ type: "text", text: `Added ${describe(loaded, scope)}` }] };
 					},
 				}),
 				defineTool({
@@ -584,9 +584,9 @@ export class Extensions {
 							// The copy keeps its place (local/<name>), so the stored record still describes it.
 							if (copied && (await exists(source))) await this.fetch(record.source, envOf(api), scope, this.sessionEnv(sessionId).cwd);
 							const loaded = await this.load(record, scope, sessionId);
-							return { content: [{ type: "text", text: `Reloaded ${describe(loaded, scope)}` }] };
+							return { output: [{ type: "text", text: `Reloaded ${describe(loaded, scope)}` }] };
 						}
-						return { content: [{ type: "text", text: `No extension named ${args.name}.` }], isError: true };
+						return { output: [{ type: "text", text: `No extension named ${args.name}.` }], isError: true };
 					},
 				}),
 				defineTool({
@@ -608,14 +608,14 @@ export class Extensions {
 								await this.select(tx, sessionId);
 							}, context);
 							this.unload(own);
-							return { content: [{ type: "text", text: `Removed ${args.name} from this session.` }] };
+							return { output: [{ type: "text", text: `Removed ${args.name} from this session.` }] };
 						}
 						if (this.loaded.has(shared) && args.scope === "default") {
 							await api.commit(async (tx) => {
 								delete (await tx.doc(DefaultExtensionsDoc, rootId())).extensions[args.name];
 							}, context);
 							this.unload(shared);
-							return { content: [{ type: "text", text: `Removed ${args.name} from every session.` }] };
+							return { output: [{ type: "text", text: `Removed ${args.name} from every session.` }] };
 						}
 						if (this.loaded.has(shared)) {
 							await api.commit(async (tx) => {
@@ -623,9 +623,9 @@ export class Extensions {
 								if (!doc.withoutDefaults.includes(args.name)) doc.withoutDefaults.push(args.name);
 								await this.select(tx, sessionId);
 							}, context);
-							return { content: [{ type: "text", text: `Left the default extension ${args.name} out of this session.` }] };
+							return { output: [{ type: "text", text: `Left the default extension ${args.name} out of this session.` }] };
 						}
-						return { content: [{ type: "text", text: `No extension named ${args.name}.` }], isError: true };
+						return { output: [{ type: "text", text: `No extension named ${args.name}.` }], isError: true };
 					},
 				}),
 				defineTool({
@@ -635,7 +635,7 @@ export class Extensions {
 					replay: "safe",
 					execute: async (_args, api) => {
 						const lines = this.list(sessionOf(api)).map((item) => `- ${describe(item, item.scope)}${item.left ? " — left out of this session" : ""}`);
-						return { content: [{ type: "text", text: lines.length > 0 ? lines.join("\n") : "No extensions yet." }] };
+						return { output: [{ type: "text", text: lines.length > 0 ? lines.join("\n") : "No extensions yet." }] };
 					},
 				}),
 				defineTool({
@@ -646,7 +646,7 @@ export class Extensions {
 					replay: "safe",
 					execute: async (_args, api, context) => {
 						const { running, available } = await this.apps(sessionOf(api), context);
-						if (available.length === 0) return { content: [{ type: "text", text: "This session's extensions offer no apps." }] };
+						if (available.length === 0) return { output: [{ type: "text", text: "This session's extensions offer no apps." }] };
 						const status = (key: string) => {
 							const app = running.find((each) => each.key === key);
 							return !app ? "not running" : app.visible ? "on screen" : "minimized in the dock";
@@ -655,7 +655,7 @@ export class Extensions {
 							(app) =>
 								`- ${app.name} ("${app.title}", from ${app.extension}${app.shared ? ", shared by every session" : ""}): ${status(app.key)}${app.description ? ` — ${app.description}` : ""}`,
 						);
-						return { content: [{ type: "text", text: lines.join("\n") }] };
+						return { output: [{ type: "text", text: lines.join("\n") }] };
 					},
 				}),
 				defineTool({
@@ -670,9 +670,9 @@ export class Extensions {
 					execute: async (args, api, context) => {
 						const sessionId = sessionOf(api);
 						const found = await this.findApp(sessionId, args.name, context);
-						if (typeof found === "string") return { content: [{ type: "text", text: found }], isError: true };
+						if (typeof found === "string") return { output: [{ type: "text", text: found }], isError: true };
 						await this.openApp(sessionId, found.key, { visible: args.minimized !== true }, context);
-						return { content: [{ type: "text", text: args.minimized ? `${found.title} is in the dock.` : `${found.title} is open on the user's screen.` }] };
+						return { output: [{ type: "text", text: args.minimized ? `${found.title} is in the dock.` : `${found.title} is open on the user's screen.` }] };
 					},
 				}),
 				defineTool({
@@ -683,9 +683,9 @@ export class Extensions {
 					execute: async (args, api, context) => {
 						const sessionId = sessionOf(api);
 						const found = await this.findApp(sessionId, args.name, context);
-						if (typeof found === "string") return { content: [{ type: "text", text: found }], isError: true };
+						if (typeof found === "string") return { output: [{ type: "text", text: found }], isError: true };
 						await endApp(sessionId, found.key);
-						return { content: [{ type: "text", text: `Closed ${found.title}.` }] };
+						return { output: [{ type: "text", text: `Closed ${found.title}.` }] };
 					},
 				}),
 			],

@@ -20,7 +20,7 @@ async function browser(api: Call, context: CallContext, method: string, params: 
 		{ type: "text", text: reply.text },
 	];
 	if (reply.image) content.push({ type: "image", data: reply.image, mimeType: "image/jpeg" });
-	return { content, isError: reply.isError === true };
+	return { output: content, isError: reply.isError === true };
 }
 
 /** Stops waiting when the run is aborted; native finishes the step it is on. */
@@ -77,7 +77,7 @@ export function browserTools(models: () => MutableModels) {
 						: undefined;
 					if (!model?.input.includes("image")) {
 						return {
-							content: [{ type: "text" as const, text: "Error: this model can't see images. Use browser_snapshot or browser_read." }],
+							output: [{ type: "text" as const, text: "Error: this model can't see images. Use browser_snapshot or browser_read." }],
 							isError: true,
 						};
 					}

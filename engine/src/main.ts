@@ -270,6 +270,12 @@ async function openStore(params: OpenParams) {
 		},
 		context,
 	);
+	// A failed storage call closes the store for good (pi-durable 1.2): the app starts the engine again, which reopens it.
+	void harness.closed.then((end) => {
+		if (end.reason !== "failed" || engine?.harness !== harness) return;
+		console.warn(`store: closed after a storage error: ${end.error instanceof Error ? end.error.message : String(end.error)}`);
+		emit({ type: "store_failed" });
+	});
 	const root = await harness.root(context);
 	engine = {
 		models,

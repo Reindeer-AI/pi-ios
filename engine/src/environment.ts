@@ -150,7 +150,7 @@ ${
 				replay: "safe",
 				execute: async ({ topic }) => {
 					const guide = GUIDES[topic as Topic];
-					if (!guide) return { content: [{ type: "text", text: `There is no guide for "${String(topic)}". Topics: ${TOPICS.join(", ")}.` }], isError: true };
+					if (!guide) return { output: [{ type: "text", text: `There is no guide for "${String(topic)}". Topics: ${TOPICS.join(", ")}.` }], isError: true };
 					const state =
 						topic !== "crabbox"
 							? ""
@@ -158,7 +158,7 @@ ${
 								? "Crabbox is connected: the crabbox tools are on.\n\n"
 								: "Crabbox is not set up yet: ask the user to set it up in Settings → Crabbox when a task needs real Linux.\n\n";
 					return {
-						content: [{ type: "text", text: state + guide }],
+						output: [{ type: "text", text: state + guide }],
 						...(topic === "browser" ? { control: { addTools: browserTools } } : {}),
 					};
 				},

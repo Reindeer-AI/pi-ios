@@ -17,6 +17,22 @@ import { parseFrontmatter, stripFrontmatter } from "@earendil-works/pi-coding-ag
 import EventEmitter from "events";
 import { BorderedLoader, componentTheme, DynamicBorder, highlightCode, markdownTheme, selectListTheme, settingsListTheme } from "./components.ts";
 
+/** pi's `:start-end` label of a read's line range (its `render-utils.ts`, which needs a terminal). */
+function formatReadLineRange(offset: unknown, limit: unknown): string {
+	const line = (value: unknown) => {
+		if (typeof value === "string" && value.trim() !== "") value = Number(value);
+		return typeof value === "number" && Number.isFinite(value) ? value : undefined;
+	};
+	if (offset == null && limit == null) return "";
+	const start = offset == null ? 1 : line(offset);
+	if (start === undefined) return "";
+	if (limit == null) return `:${start}`;
+	const count = line(limit);
+	if (count === undefined) return "";
+	const end = start + count - 1;
+	return `:${start}${end ? `-${end}` : ""}`;
+}
+
 /** What the module needs from the engine. */
 export type CodingAgentServices = {
 	/** pi's agent directory (`~/.pi/agent`): one per app. */
@@ -173,7 +189,7 @@ export function codingAgentModule(services: CodingAgentServices): Record<string,
 	module.BorderedLoader = BorderedLoader;
 
 	Object.assign(module, {
-		VERSION: "1.0.2",
+		VERSION: "1.3.0",
 		CONFIG_DIR_NAME: ".pi",
 		CURRENT_SESSION_VERSION: 3,
 		DEFAULT_COMPACTION_SETTINGS: { enabled: true, reserveTokens: 16384, keepRecentTokens: 20000 },
@@ -185,6 +201,7 @@ export function codingAgentModule(services: CodingAgentServices): Record<string,
 		truncateTail,
 		truncateLine,
 		truncateToVisualLines,
+		formatReadLineRange,
 		convertToLlm,
 		parseFrontmatter,
 		stripFrontmatter,

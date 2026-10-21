@@ -92,9 +92,9 @@ export const VaultTools = defineExtension({
 			replay: "safe",
 			execute: async (args) => {
 				const items = await request<VaultItem[]>("vault", "list", { requester: "the agent", ...args });
-				if (items.length === 0) return { content: [{ type: "text", text: "The vault is empty." }] };
+				if (items.length === 0) return { output: [{ type: "text", text: "The vault is empty." }] };
 				const lines = items.map((item) => `- ${item.label} (${item.kind}${item.hint ? `, ${item.hint}` : ""}): id ${item.id}, fields ${item.fields.join(", ")}`);
-				return { content: [{ type: "text", text: lines.join("\n") }] };
+				return { output: [{ type: "text", text: lines.join("\n") }] };
 			},
 		}),
 	],
