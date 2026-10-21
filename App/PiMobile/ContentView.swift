@@ -59,9 +59,10 @@ struct RootView: View {
             if let open = path.last, app.phase == .ready, !ids.contains(open) { path.removeAll { !ids.contains($0) } }
         }
         .sheet(isPresented: $showingSettings) { SettingsView(app: app) }
-        // A device's first sync, when it differs from what's in iCloud: which settings to keep.
-        .sheet(isPresented: Binding(get: { !SyncedSettings.shared.conflicts.isEmpty }, set: { _ in })) {
-            SyncChoiceSheet(conflicts: SyncedSettings.shared.conflicts) { SyncedSettings.shared.resolve(useICloud: $0) }
+        // A device's first sync, when it differs from what's in iCloud, or items changed differently on two devices:
+        // which settings to keep (from Settings while it's open, as a login).
+        .sheet(isPresented: Binding(get: { !SyncedSettings.shared.conflicts.isEmpty && !showingSettings }, set: { _ in })) {
+            SyncChoiceSheet(conflicts: SyncedSettings.shared.conflicts, firstSync: SyncedSettings.shared.firstSync) { SyncedSettings.shared.resolve(useICloud: $0) }
                 .interactiveDismissDisabled()
         }
         // A login started from Settings presents its sheet from Settings (only the top screen can present one).
@@ -1127,9 +1128,11 @@ private final class RenderCache<Value> {
     }
 }
 
-/// A device's first sync, when its settings differ from what's in iCloud: each setting both have, and which to keep.
+/// A device's first sync, when its settings differ from what's in iCloud, or list items changed differently here and on
+/// another device: each setting both have, and which to keep.
 private struct SyncChoiceSheet: View {
     let conflicts: [SyncedSettings.Conflict]
+    let firstSync: Bool
     let choose: (_ useICloud: Bool) -> Void
 
     var body: some View {
@@ -1145,7 +1148,11 @@ private struct SyncChoiceSheet: View {
                         .padding(.vertical, 2)
                     }
                 } footer: {
-                    Text("Settings on only one side are kept either way, and lists merge item by item. Your choice decides the ones above, on all your devices.")
+                    if firstSync {
+                        Text("Settings on only one side are kept either way, and lists merge item by item. Your choice decides the ones above, on all your devices.")
+                    } else {
+                        Text("Changed here and on another device, each without the other's change. Until you choose, each device keeps its own and everything else syncs. Your choice decides them on all your devices.")
+                    }
                 }
                 Section {
                     Button("Use iCloud's Settings") { choose(true) }
@@ -1965,7 +1972,7 @@ private struct SettingsView: View {
                 } header: {
                     Text("iCloud")
                 } footer: {
-                    Text("Sign-ins, the network server, the default model, extensions and their secrets, MCP servers and the vault sync to your devices signed in to the same Apple Account, through iCloud Keychain (end-to-end encrypted). Changes from another device apply when pi starts (extensions also when it comes to the front); the newest change wins, and lists merge item by item. Extensions written in pi go to your other devices through iCloud while sessions sync.")
+                    Text("Sign-ins, the network server, the default model, extensions and their secrets, MCP servers and the vault sync to your devices signed in to the same Apple Account, through iCloud Keychain (end-to-end encrypted). Changes from another device apply when pi starts (extensions also when it comes to the front); the newest change wins, and lists merge item by item. An MCP server, extension secret or vault item changed differently on two devices is asked about instead of overwritten. Extensions written in pi go to your other devices through iCloud while sessions sync.")
                 }
 
                 if app.sync.supported { SyncSettingsSection(sync: app.sync) }
@@ -2048,6 +2055,10 @@ private struct SettingsView: View {
         }
         .sheet(isPresented: Binding(get: { app.authFlow != nil }, set: { if !$0 { app.cancelLogin() } })) {
             AuthSheet(app: app)
+        }
+        .sheet(isPresented: Binding(get: { !SyncedSettings.shared.conflicts.isEmpty && app.authFlow == nil }, set: { _ in })) {
+            SyncChoiceSheet(conflicts: SyncedSettings.shared.conflicts, firstSync: SyncedSettings.shared.firstSync) { SyncedSettings.shared.resolve(useICloud: $0) }
+                .interactiveDismissDisabled()
         }
     }
 

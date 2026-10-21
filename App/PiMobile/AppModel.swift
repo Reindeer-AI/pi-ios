@@ -877,7 +877,8 @@ final class AppModel {
         return providers
     }
 
-    /// Settings taken from iCloud after launch (a device's first sync, chosen once pi runs): the ones the app holds.
+    /// Settings taken from iCloud after launch (a device's first sync, or items that diverged, chosen once pi runs): the
+    /// ones the app holds, and the engine's MCP servers and extension secrets.
     private func applySyncedSettings(_ keys: [String]) {
         let defaults = UserDefaults.standard
         if keys.contains("networkEndpoint") { networkEndpoint = defaults.string(forKey: "networkEndpoint") ?? "" }
@@ -889,6 +890,8 @@ final class AppModel {
             defaultThinkingLevel = defaults.string(forKey: Self.defaultThinkingLevelKey) ?? "off"
         }
         Task {
+            if keys.contains("mcpServers") { await mcpChanged() }
+            if keys.contains("extensionSecrets") { await secretsChanged() }
             await updateCustomProviders()
             await syncExtensions()
         }

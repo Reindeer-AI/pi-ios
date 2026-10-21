@@ -8,6 +8,11 @@ import Security
 /// before the app reads them; pushed as they change here.
 ///
 /// A device that never synced and differs from what's in iCloud asks first (`conflicts`): iCloud's, or this device's.
+/// So does one whose MCP server, extension secret or vault item another device changed differently without having seen
+/// this one's version of it (`askedKeys`): each keeps its own until the user chooses.
+///
+/// Every device writes the whole item, so iCloud Keychain can lose one device's write to another's made before it
+/// arrived; a device that finds iCloud with an older version of what it sent sends it again.
 @MainActor
 @Observable
 final class SyncedSettings {
@@ -41,8 +46,13 @@ final class SyncedSettings {
         "mcpServers": .jsonArray(id: "name"),
         syncedExtensionsKey: .array(id: "source"),
     ]
+    /// Lists whose items the user edits: an item changed differently on two devices, neither having seen the other's
+    /// change, is asked about (`conflicts`), never overwritten. In the others (extensions, extensions' data) the newest
+    /// change wins.
+    static let askedKeys: Set<String> = ["mcpServers", "extensionSecrets", "vaultItems"]
 
-    /// A setting this device and iCloud both have, differently, when this device first syncs.
+    /// A setting this device and iCloud both have, differently, when this device first syncs; or list items changed
+    /// differently here and on another device.
     struct Conflict: Identifiable {
         let key: String
         let title: String
@@ -53,8 +63,10 @@ final class SyncedSettings {
         var id: String { key }
     }
 
-    /// Asked of the user before this device first syncs (`resolve`); empty otherwise.
+    /// Asked of the user (`resolve`): before this device first syncs, or once list items diverged; empty otherwise.
     private(set) var conflicts: [Conflict] = []
+    /// Whether `conflicts` are this device's first sync (nothing syncs until the user chooses), not items that diverged.
+    var firstSync: Bool { !joined }
     /// Settings that came from another device while pi runs: the app applies them (`AppModel.applySyncedSettings`).
     @ObservationIgnored var onPulled: (([String]) -> Void)?
 
@@ -77,6 +89,15 @@ final class SyncedSettings {
         get { defaults.dictionary(forKey: "syncValues") as? [String: Data] ?? [:] }
         set { defaults.set(newValue, forKey: "syncValues") }
     }
+    /// For each list item here, the change of it its last change came from: the newest this device had seen then (sent
+    /// along, so another device tells a change made without seeing its own).
+    private var itemsBase: [String: [String: Date]] {
+        get { defaults.dictionary(forKey: "syncItemsBase") as? [String: [String: Date]] ?? [:] }
+        set { defaults.set(newValue, forKey: "syncItemsBase") }
+    }
+    /// List items this device and another changed differently, each without the other's change: kept here as they are,
+    /// and asked about (`conflicts`).
+    @ObservationIgnored private var diverged: [String: Set<String>] = [:]
     @ObservationIgnored private var observer: NSObjectProtocol?
     @ObservationIgnored private var pending: Task<Void, Never>?
 
@@ -109,11 +130,15 @@ final class SyncedSettings {
     func resolve(useICloud: Bool) {
         // This device's: its single values, and its version of the list items both have, win; the rest merges.
         var prefer: [String: Set<String>?] = [:]
-        if !useICloud { for conflict in conflicts { prefer[conflict.key] = conflict.items.isEmpty ? nil : Set(conflict.items) } }
+        var take: [String: Set<String>] = [:]
+        for conflict in conflicts {
+            if !useICloud { prefer[conflict.key] = conflict.items.isEmpty ? nil : Set(conflict.items) } else if !conflict.items.isEmpty { take[conflict.key] = Set(conflict.items) }
+        }
         let keys = Set(Self.keys.keys)
         conflicts = []
+        diverged = [:]
         joined = true
-        pull(remote(), prefer: prefer)
+        pull(remote(), prefer: prefer, take: take)
         push(prefer: prefer)
         observe()
         onPulled?(Array(keys))
@@ -144,10 +169,10 @@ final class SyncedSettings {
     // MARK: - Pull and push
 
     /// `prefer`: settings this device keeps (a single value: nil; a list: the items it keeps), sent by `push(prefer:)`;
-    /// `only`: just these settings. The settings that changed.
+    /// `take`: list items it takes from iCloud whatever it has; `only`: just these settings. The settings that changed.
     @discardableResult
-    private func pull(_ remote: [String: [String: Any]], prefer: [String: Set<String>?] = [:], only: Set<String>? = nil) -> [String] {
-        var at = syncedAt, items = itemsAt, values = syncedValues
+    private func pull(_ remote: [String: [String: Any]], prefer: [String: Set<String>?] = [:], take: [String: Set<String>] = [:], only: Set<String>? = nil) -> [String] {
+        var at = syncedAt, items = itemsAt, bases = itemsBase, values = syncedValues
         var applied: [String] = []
         for (key, kind) in Self.keys where only?.contains(key) ?? true {
             guard let entry = remote[key] else { continue }
@@ -161,24 +186,36 @@ final class SyncedSettings {
                 values[key] = defaults.object(forKey: key).flatMap(Self.encode)
             default:
                 // The other devices' changes go into the list here and into what it was when last synced; a change made
-                // here since stays to send.
+                // here since stays to send. One that differs from this device's version of the item, and was made
+                // without it (changed here since, or changed from an older version), is kept out and asked about.
                 var local = elements(kind, defaults.object(forKey: key))
                 var synced = elements(kind, values[key].flatMap(Self.decode))
-                var known = items[key] ?? [:]
+                var known = items[key] ?? [:], base = bases[key] ?? [:]
                 var changed = false
                 for (id, item) in entry["items"] as? [String: [String: Any]] ?? [:] where !keptItems.contains(id) {
-                    guard let when = item["at"] as? Date, when > known[id] ?? .distantPast else { continue }
-                    if item["deleted"] as? Bool == true {
-                        local.removeValue(forKey: id)
-                        synced.removeValue(forKey: id)
-                    } else if let value = item["value"] {
-                        local[id] = value
-                        synced[id] = value
+                    guard let when = item["at"] as? Date, when != known[id] else { continue }
+                    let theirs = Self.itemValue(item)
+                    if take[key]?.contains(id) != true {
+                        // Older than this device's: iCloud lost its change, which `push` sends again.
+                        guard when > known[id] ?? .distantPast else { continue }
+                        if Self.askedKeys.contains(key), !Self.sameItem(local[id], theirs) {
+                            let unsent = !Self.sameItem(local[id], synced[id])
+                            let unseen = (item["base"] as? Date).map { $0 < known[id] ?? .distantPast } ?? false
+                            if unsent || unseen {
+                                diverged[key, default: []].insert(id)
+                                continue
+                            }
+                        }
                     }
+                    local[id] = theirs
+                    synced[id] = theirs
                     known[id] = when
+                    base[id] = item["base"] as? Date
+                    diverged[key]?.remove(id)
                     changed = true
                 }
                 items[key] = known
+                bases[key] = base
                 guard changed else { continue }
                 let order = defaults.object(forKey: key)
                 if let value = storage(kind, local, order: order) { defaults.set(value, forKey: key) } else { defaults.removeObject(forKey: key) }
@@ -188,18 +225,22 @@ final class SyncedSettings {
         }
         syncedAt = at
         itemsAt = items
+        itemsBase = bases
         syncedValues = values
         if !applied.isEmpty { log("sync", "from your other devices: \(applied.sorted().joined(separator: ", "))") }
+        updateConflicts(remote)
         return applied
     }
 
-    /// Sends what changed here since the last sync. `prefer` sends those settings (single values, list items) as the
-    /// newest whatever changed; `replace` sends those settings whole, list items this device lacks deleted.
+    /// Sends what changed here since the last sync, and what iCloud lost of this device's changes. `prefer` sends those
+    /// settings (single values, list items) as the newest whatever changed; `replace` sends those settings whole, list
+    /// items this device lacks deleted.
     private func push(prefer: [String: Set<String>?] = [:], replace: Set<String> = []) {
         guard joined else { return }
-        var at = syncedAt, items = itemsAt, values = syncedValues
+        var at = syncedAt, items = itemsAt, bases = itemsBase, values = syncedValues
         var merged = remote()
-        var sent: [String] = []
+        var sent: [String] = [], again: [String] = []
+        var adopted = false
         let now = Date()
         for (key, kind) in Self.keys {
             let value = defaults.object(forKey: key)
@@ -207,47 +248,117 @@ final class SyncedSettings {
             let replacing = replace.contains(key)
             let forced = replacing || prefer.keys.contains(key)
             let preferredItems = prefer[key].flatMap { $0 } ?? []
-            guard forced || !Self.same(encoded, values[key]) else { continue }
             switch kind {
             case .value:
-                merged[key] = encoded == nil ? ["deleted": true, "at": now] : ["value": value!, "at": now]
-                at[key] = now
+                let theirs = merged[key]?["at"] as? Date
+                if forced || !Self.same(encoded, values[key]) {
+                    // Newer than what it replaces even on a clock behind.
+                    let when = max(now, max(at[key] ?? .distantPast, theirs ?? .distantPast).addingTimeInterval(0.001))
+                    merged[key] = encoded == nil ? ["deleted": true, "at": when] : ["value": value!, "at": when]
+                    at[key] = when
+                    values[key] = encoded
+                    sent.append(key)
+                } else if let had = at[key], theirs.map({ $0 < had }) ?? true {
+                    // iCloud has an older change than this device's (another device's write crossed it): again.
+                    let synced = values[key].flatMap(Self.decode)
+                    merged[key] = synced == nil ? ["deleted": true, "at": had] : ["value": synced!, "at": had]
+                    again.append(key)
+                }
             default:
                 let current = elements(kind, value)
                 let before = replacing ? elements(kind, merged[key].map { Self.values(of: $0) }) : elements(kind, values[key].flatMap(Self.decode))
                 var remoteItems = merged[key]?["items"] as? [String: [String: Any]] ?? [:]
-                var known = items[key] ?? [:]
-                var changed = 0
-                for (id, element) in current where replacing || preferredItems.contains(id) || !Self.same(Self.encode(element), before[id].flatMap(Self.encode)) {
-                    remoteItems[id] = ["value": element, "at": now]
-                    known[id] = now
+                var known = items[key] ?? [:], base = bases[key] ?? [:]
+                var synced = before
+                var changed = 0, resent = 0
+                var keptOwn = false
+                for id in Set(current.keys).union(before.keys).union(known.keys) {
+                    let mine = current[id]
+                    let theirs = remoteItems[id]
+                    let theirsAt = theirs?["at"] as? Date
+                    if !replacing, !preferredItems.contains(id), Self.sameItem(mine, before[id]) {
+                        // Not changed here. iCloud has an older change of it than this device's version: sent again, unless
+                        // it's another device's change made without this one's (an item the user is asked about).
+                        guard let had = known[id], theirsAt.map({ $0 < had }) ?? true else { continue }
+                        if let theirs, let theirsAt, theirsAt > base[id] ?? .distantFuture, Self.askedKeys.contains(key) {
+                            if !Self.sameItem(mine, Self.itemValue(theirs)) {
+                                diverged[key, default: []].insert(id)
+                                keptOwn = true
+                            }
+                            continue
+                        }
+                        remoteItems[id] = Self.item(before[id], at: had, base: base[id])
+                        resent += 1
+                        continue
+                    }
+                    if !replacing, !preferredItems.contains(id), Self.askedKeys.contains(key), let theirs, let theirsAt, theirsAt > known[id] ?? .distantPast {
+                        // Changed on another device too since this one last synced it: the same change, or asked about.
+                        if Self.sameItem(mine, Self.itemValue(theirs)) {
+                            synced[id] = mine
+                            known[id] = theirsAt
+                            base[id] = theirs["base"] as? Date
+                            diverged[key]?.remove(id)
+                            adopted = true
+                        } else {
+                            diverged[key, default: []].insert(id)
+                            keptOwn = true
+                        }
+                        continue
+                    }
+                    let from = max(known[id] ?? Self.nothingSeen, theirsAt ?? Self.nothingSeen)
+                    let when = max(now, from.addingTimeInterval(0.001))
+                    remoteItems[id] = Self.item(mine, at: when, base: from)
+                    known[id] = when
+                    base[id] = from
+                    synced[id] = mine
+                    diverged[key]?.remove(id)
                     changed += 1
                 }
-                for id in before.keys where current[id] == nil {
-                    remoteItems[id] = ["deleted": true, "at": now]
-                    known[id] = now
-                    changed += 1
-                }
-                // Only the order changed: nothing to send.
-                guard changed > 0 || forced else {
-                    values[key] = encoded
-                    continue
-                }
-                merged[key] = ["items": remoteItems]
                 items[key] = known
+                bases[key] = base
+                // What it was when last synced: this device's own version of the items it keeps for the user to decide.
+                values[key] = keptOwn ? storage(kind, synced, order: value).flatMap(Self.encode) : encoded
+                guard changed + resent > 0 || forced else { continue }
+                merged[key] = ["items": remoteItems]
+                if changed > 0 || forced { sent.append(key) } else { again.append(key) }
             }
-            values[key] = encoded
-            sent.append(key)
         }
-        guard !sent.isEmpty else { return }
+        defer { updateConflicts(merged) }
+        guard !sent.isEmpty || !again.isEmpty || adopted else {
+            syncedValues = values
+            return
+        }
         do {
-            try write(merged)
+            if !sent.isEmpty || !again.isEmpty { try write(merged) }
             syncedAt = at
             itemsAt = items
+            itemsBase = bases
             syncedValues = values
-            log("sync", "sent: \(sent.sorted().joined(separator: ", "))")
+            if !sent.isEmpty { log("sync", "sent: \(sent.sorted().joined(separator: ", "))") }
+            if !again.isEmpty { log("sync", "sent again (iCloud had an older change): \(again.sorted().joined(separator: ", "))") }
         } catch {
             log("sync", "couldn't save: \(error.localizedDescription)")
+        }
+    }
+
+    /// The list items that diverged, as asked of the user; a device's first sync asks its own (`findConflicts`).
+    private func updateConflicts(_ remote: [String: [String: Any]]) {
+        guard joined else { return }
+        let asked = diverged.filter { !$0.value.isEmpty }
+        let before = conflicts.map { "\($0.key)/\($0.items)" }
+        conflicts = asked.compactMap { key, ids -> Conflict? in
+            guard let kind = Self.keys[key] else { return nil }
+            let here = elements(kind, defaults.object(forKey: key))
+            let there = (remote[key]?["items"] as? [String: [String: Any]] ?? [:]).mapValues(Self.itemValue)
+            let sorted = ids.sorted()
+            return Conflict(key: key, title: Self.title(key),
+                            here: sorted.map { Self.describe(key, id: $0, here[$0], other: there[$0] ?? nil) }.joined(separator: "; "),
+                            iCloud: sorted.map { Self.describe(key, id: $0, there[$0] ?? nil, other: here[$0]) }.joined(separator: "; "),
+                            items: sorted)
+        }
+        .sorted { $0.title < $1.title }
+        if conflicts.map({ "\($0.key)/\($0.items)" }) != before, !conflicts.isEmpty {
+            log("sync", "changed here and on another device differently: \(conflicts.map { "\($0.key) \($0.items.joined(separator: ", "))" }.joined(separator: "; ")); asking")
         }
     }
 
@@ -303,6 +414,32 @@ final class SyncedSettings {
         return id
     }
 
+    /// A list item in a question: an MCP server by what differs from the other version (its URL, on or off, ...);
+    /// another by its name (never a secret's value).
+    private static func describe(_ key: String, id: String, _ element: Any?, other: Any?) -> String {
+        guard let element else { return "\(id): removed" }
+        func server(_ element: Any?) -> [String: Any]? {
+            (element as? Data).flatMap { try? JSONSerialization.jsonObject(with: $0) as? [String: Any] }
+        }
+        guard key == "mcpServers", let mine = server(element) else { return name(key, element, id: id) }
+        let theirs = server(other) ?? [:]
+        let differing = Set(mine.keys).union(theirs.keys).subtracting(["name"]).sorted().filter { field in
+            (mine[field] as? NSObject).map { !$0.isEqual(theirs[field]) } ?? (theirs[field] != nil)
+        }
+        let parts = differing.map { field -> String in
+            let value = mine[field].flatMap { $0 is NSNull ? nil : $0 }
+            switch (field, value) {
+            case ("enabled", let on as Bool): return on ? "on" : "off"
+            case ("url", let url?): return "\(url)"
+            case ("headerNames", let names as [String]): return names.isEmpty ? "no headers" : "headers \(names.joined(separator: ", "))"
+            case ("oauthClientId", let client?): return "OAuth app \(client)"
+            case (_, let value?): return "\(field) \(value)"
+            case (_, nil): return "no \(field)"
+            }
+        }
+        return parts.isEmpty ? id : "\(id): \(parts.joined(separator: ", "))"
+    }
+
     // MARK: - Lists as items
 
     /// A list's items by id, from how it's kept (`UserDefaults`), or from iCloud's items.
@@ -339,6 +476,31 @@ final class SyncedSettings {
             return try? JSONSerialization.data(withJSONObject: objects)
         case .array: return ids.compactMap { items[$0] }
         }
+    }
+
+    /// The change an item new here was made from: none (a date any plist reader takes, unlike `Date.distantPast`).
+    private static let nothingSeen = Date(timeIntervalSince1970: 0)
+
+    /// An item as iCloud keeps it: its value (none: deleted), when it changed, and the change it was made from.
+    private static func item(_ value: Any?, at: Date, base: Date?) -> [String: Any] {
+        var item: [String: Any] = value.map { ["value": $0] } ?? ["deleted": true]
+        item["at"] = at
+        if let base { item["base"] = base }
+        return item
+    }
+
+    /// An iCloud item's value; nil for a deleted one.
+    private static func itemValue(_ item: [String: Any]) -> Any? {
+        item["deleted"] as? Bool == true ? nil : item["value"]
+    }
+
+    /// Whether two items (nil: none) are the same, an MCP server's JSON whatever its keys' order.
+    private static func sameItem(_ a: Any?, _ b: Any?) -> Bool {
+        if let a = a as? Data, let b = b as? Data, a != b,
+           let x = try? JSONSerialization.jsonObject(with: a) as? NSObject, let y = try? JSONSerialization.jsonObject(with: b) as? NSObject {
+            return x.isEqual(y)
+        }
+        return same(a.flatMap(encode), b.flatMap(encode))
     }
 
     /// iCloud's items of a list entry, as items by id (deleted ones left out).
