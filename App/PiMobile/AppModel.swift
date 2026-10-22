@@ -2391,7 +2391,7 @@ final class AppModel {
             backgroundRun.begin(title: "pi is working")
         } else if !running && backgroundActive {
             backgroundActive = false
-            backgroundRun.end(success: true)
+            backgroundRun.end()
         }
     }
 
