@@ -13,9 +13,9 @@ final class DeviceStore: SyncStore {
     let cloud: Cloud
     var local: Data?
     var at = Date.distantPast
-    var writes = 0
+    var writes = 0, reads = 0
     init(_ cloud: Cloud) { self.cloud = cloud }
-    func read() -> Data? { local }
+    func read() -> Data? { reads += 1; return local }
     func write(_ data: Data) throws { local = data; at = Date(); writes += 1 }
     func upload() { if at > cloud.at { cloud.data = local; cloud.at = at } }
     func download() { if cloud.at > at { local = cloud.data; at = cloud.at } }
@@ -62,6 +62,7 @@ final class Device {
         settle()
     }
     func set(_ key: String, _ value: Any) { defaults.set(value, forKey: key); settle() }
+    func value(_ key: String) -> String? { defaults.string(forKey: key) }
     var conflictItems: [String] { settings.conflicts.flatMap { c in c.items.isEmpty ? [c.key] : c.items.map { "\(c.key)/\($0)" } }.sorted() }
 }
 
@@ -144,21 +145,24 @@ var failures = 0
         check(phone.conflictItems == ["mcpServers/github"], "the phone asks about github (\(phone.conflictItems))")
         phone.settings.resolve(useICloud: false)
         settle()
-        replicate([phone, mac]); mac.relaunch()
-        check(mac.url("github") == "https://phone", "Keep This Device's: the Mac takes the phone's (\(mac.url("github") ?? "nil"))")
-        check(mac.conflictItems.isEmpty && phone.conflictItems.isEmpty, "nothing left to ask (\(mac.conflictItems))")
+        replicate([phone, mac]); mac.relaunch(); phone.relaunch()
+        check(phone.url("github") == "https://phone" && mac.url("github") == "https://mac", "Keep This Device's: each keeps its own (\(phone.url("github") ?? "nil"), \(mac.url("github") ?? "nil"))")
+        check(mac.conflictItems.isEmpty && phone.conflictItems.isEmpty, "nothing left to ask (\(phone.conflictItems) \(mac.conflictItems))")
+        check(phone.settings.ownSettings == ["MCP server github"], "the phone lists github as its own (\(phone.settings.ownSettings))")
+        mac.setServer("github", url: "https://mac2"); replicate([phone, mac]); phone.relaunch()
+        check(phone.url("github") == "https://phone" && phone.conflictItems.isEmpty, "the Mac's next change doesn't touch the phone's, nor asks (\(phone.url("github") ?? "nil"))")
     }
 
     print("4. Changes to different servers merge, without asking")
     do {
         let (phone, mac, _) = pair()
         phone.setServer("github", url: "https://phone")
-        mac.setServer("linear", url: "https://linear-mac")
+        mac.setServer("jira", url: "https://jira-mac")
         mac.setServer("notion", url: "https://notion-mac")
         replicate([phone, mac])
         phone.relaunch(); replicate([phone, mac]); mac.relaunch()
         for device in [phone, mac] {
-            check(device.url("github") == "https://phone" && device.url("linear") == "https://linear-mac" && device.url("notion") == "https://notion-mac",
+            check(device.url("github") == "https://phone" && device.url("jira") == "https://jira-mac" && device.url("notion") == "https://notion-mac",
                   "\(device.name): \(device.servers.keys.sorted().map { "\($0)=\(device.url($0)!)" })")
             check(device.conflictItems.isEmpty, "\(device.name) asks nothing (\(device.conflictItems))")
         }
@@ -185,16 +189,26 @@ var failures = 0
         check(mac.url("linear") == "https://linear-mac" && mac.conflictItems == ["mcpServers/linear"], "the Mac keeps its own and asks (\(mac.conflictItems))")
     }
 
-    print("7. A change on one device, nothing on the other: it just arrives")
+    print("7. A change to a server the phone took from the Mac just arrives; to one set on the phone, it asks")
     do {
         let (phone, mac, _) = pair()
+        mac.setServer("notion", url: "https://notion-mac")
+        replicate([phone, mac]); phone.relaunch()
+        mac.setServer("notion", url: "https://notion-mac2")
         mac.setServer("github", url: "https://mac")
         mac.removeServer("linear")
         replicate([phone, mac]); phone.relaunch()
-        check(phone.url("github") == "https://mac" && phone.url("linear") == nil && phone.conflictItems.isEmpty, "the phone takes both, asks nothing")
+        check(phone.url("notion") == "https://notion-mac2", "notion, taken from the Mac, follows it (\(phone.url("notion") ?? "nil"))")
+        check(phone.url("github") == "https://v0" && phone.url("linear") == "https://linear-v0", "github and linear, set on the phone, stay")
+        check(phone.conflictItems == ["mcpServers/github", "mcpServers/linear"], "and are asked about (\(phone.conflictItems))")
+        print("        asks: \(phone.settings.conflicts.map { "\($0.title) — This device: \($0.here) | iCloud: \($0.iCloud)" })")
+        phone.settings.resolve(useICloud: true); settle()
+        check(phone.url("github") == "https://mac" && phone.url("linear") == nil && phone.conflictItems.isEmpty, "Use the other device's: the phone takes both")
+        mac.setServer("github", url: "https://mac2"); replicate([phone, mac]); phone.relaunch()
+        check(phone.url("github") == "https://mac2" && phone.conflictItems.isEmpty, "and follows the Mac's next change without asking (\(phone.url("github") ?? "nil"))")
         phone.setServer("github", url: "https://phone2")
         replicate([phone, mac]); mac.relaunch()
-        check(mac.url("github") == "https://phone2" && mac.conflictItems.isEmpty, "and back (\(mac.url("github") ?? "nil"))")
+        check(mac.url("github") == "https://mac2" && mac.conflictItems == ["mcpServers/github"], "the phone's change is asked about on the Mac, which set github (\(mac.url("github") ?? "nil") \(mac.conflictItems))")
     }
 
     print("8. Three devices: the iPad changes after taking the phone's change; the Mac only receives")
@@ -205,9 +219,10 @@ var failures = 0
         replicate([phone, mac, ipad]); ipad.relaunch()
         ipad.setServer("github", url: "https://ipad")
         replicate([phone, mac, ipad]); phone.relaunch(); mac.relaunch()
-        for device in [phone, mac, ipad] {
+        for device in [mac, ipad] {
             check(device.url("github") == "https://ipad" && device.conflictItems.isEmpty, "\(device.name): \(device.url("github") ?? "nil") \(device.conflictItems)")
         }
+        check(phone.url("github") == "https://phone" && phone.conflictItems == ["mcpServers/github"], "the phone, which set it, asks (\(phone.url("github") ?? "nil") \(phone.conflictItems))")
     }
 
     print("9. A device's first sync with a different server still asks first")
@@ -263,7 +278,102 @@ var failures = 0
         mac.setServer("github", url: "https://phone")
         check(mac.conflictItems.isEmpty, "nothing to ask (\(mac.conflictItems))")
         mac.setServer("github", url: "https://phone", enabled: false); replicate([phone, mac]); phone.relaunch()
-        check(phone.servers["github"]?["enabled"] as? Bool == false && phone.conflictItems.isEmpty, "and its next change reaches the phone")
+        check(phone.servers["github"]?["enabled"] as? Bool == true && phone.conflictItems == ["mcpServers/github"], "its next change is asked about on the phone, which set github (\(phone.conflictItems))")
+        print("        asks: \(phone.settings.conflicts.map { "\($0.title) — This device: \($0.here) | iCloud: \($0.iCloud)" })")
+        phone.settings.resolve(useICloud: true); settle()
+        check(phone.servers["github"]?["enabled"] as? Bool == false && phone.conflictItems.isEmpty, "and reaches it once the phone takes it")
+    }
+
+    print("14. The reported case: the phone and the Mac need different addresses; the Mac sets its own after taking the phone's")
+    do {
+        let (phone, mac, _) = pair()
+        phone.set("networkEndpoint", "https://gateway.mobile/v1")
+        phone.set("crabboxBroker", "http://crabbox.mobile")
+        phone.setServer("docs", url: "https://docs.mobile/mcp")
+        replicate([phone, mac]); mac.relaunch()
+        check(mac.value("networkEndpoint") == "https://gateway.mobile/v1" && mac.conflictItems.isEmpty, "the Mac, which set none of them, takes the phone's")
+        mac.set("networkEndpoint", "https://gateway.internal/v1")
+        mac.set("crabboxBroker", "https://crabbox.internal")
+        mac.setServer("docs", url: "https://docs.internal/mcp")
+        replicate([phone, mac]); phone.relaunch()
+        check(phone.value("networkEndpoint") == "https://gateway.mobile/v1" && phone.value("crabboxBroker") == "http://crabbox.mobile" && phone.url("docs") == "https://docs.mobile/mcp",
+              "the phone keeps its addresses (\(phone.value("networkEndpoint") ?? "nil"), \(phone.value("crabboxBroker") ?? "nil"), \(phone.url("docs") ?? "nil"))")
+        check(phone.conflictItems == ["crabboxBroker", "mcpServers/docs", "networkEndpoint"], "and asks about them (\(phone.conflictItems))")
+        print("        asks: \(phone.settings.conflicts.map { "\($0.title) — This device: \($0.here) | iCloud: \($0.iCloud)" })")
+        phone.settings.resolve(useICloud: false); settle()
+        check(phone.conflictItems.isEmpty && phone.settings.ownSettings == ["Crabbox", "MCP server docs", "Network server"], "Keep This Device's: its own (\(phone.settings.ownSettings))")
+        mac.set("crabboxBroker", "https://crabbox2.internal")
+        mac.setServer("docs", url: "https://docs2.internal/mcp")
+        replicate([phone, mac]); phone.relaunch()
+        check(phone.value("crabboxBroker") == "http://crabbox.mobile" && phone.url("docs") == "https://docs.mobile/mcp" && phone.conflictItems.isEmpty, "the Mac's later changes don't touch them, nor ask")
+        phone.set("networkEndpoint", "https://gateway2.mobile/v1")
+        replicate([phone, mac]); mac.relaunch()
+        check(mac.value("networkEndpoint") == "https://gateway.internal/v1" && mac.conflictItems.isEmpty, "and the phone's own changes stay on the phone (\(mac.value("networkEndpoint") ?? "nil"))")
+        phone.set("defaultThinkingLevel", "high"); replicate([phone, mac]); mac.relaunch()
+        check(mac.defaults.string(forKey: "defaultThinkingLevel") == "high", "everything else still syncs")
+    }
+
+    print("15. Devices that synced before this rule: what each has counts as set there, so the first change elsewhere is asked")
+    do {
+        let (phone, mac, _) = pair()
+        mac.set("crabboxBroker", "https://crabbox.internal"); replicate([phone, mac]); phone.relaunch()
+        check(phone.value("crabboxBroker") == "https://crabbox.internal", "before the update: the phone took the Mac's broker, as reported")
+        for device in [phone, mac] { device.defaults.removeObject(forKey: "syncSetHere"); device.relaunch() }   // the update
+        phone.set("crabboxBroker", "http://crabbox.mobile")     // the user puts the phone's back
+        replicate([phone, mac]); mac.relaunch()
+        check(mac.value("crabboxBroker") == "https://crabbox.internal" && mac.conflictItems == ["crabboxBroker"], "the Mac keeps its broker and asks (\(mac.value("crabboxBroker") ?? "nil") \(mac.conflictItems))")
+        mac.settings.resolve(useICloud: false); settle()
+        mac.set("crabboxBroker", "https://crabbox2.internal")
+        replicate([phone, mac]); phone.relaunch()
+        check(phone.value("crabboxBroker") == "http://crabbox.mobile" && phone.conflictItems.isEmpty, "the phone keeps its own (\(phone.value("crabboxBroker") ?? "nil"))")
+    }
+
+    print("16. Sync again: the phone takes the Mac's newer change, then follows it")
+    do {
+        let (phone, mac, _) = pair()
+        phone.set("crabboxBroker", "http://crabbox.mobile"); replicate([phone, mac]); mac.relaunch()
+        mac.set("crabboxBroker", "https://crabbox.internal"); replicate([phone, mac]); phone.relaunch()
+        phone.settings.resolve(useICloud: false); settle()
+        phone.settings.syncAgain(); settle()
+        check(phone.value("crabboxBroker") == "https://crabbox.internal" && phone.settings.ownSettings.isEmpty, "the phone takes the Mac's (\(phone.value("crabboxBroker") ?? "nil"))")
+        mac.set("crabboxBroker", "https://crabbox2.internal"); replicate([phone, mac]); phone.relaunch()
+        check(phone.value("crabboxBroker") == "https://crabbox2.internal" && phone.conflictItems.isEmpty, "and follows it (\(phone.value("crabboxBroker") ?? "nil"))")
+    }
+
+    print("17. Sync again, then a change on the phone: the Mac, which set its own, asks")
+    do {
+        let (phone, mac, _) = pair()
+        phone.set("crabboxBroker", "http://crabbox.mobile"); replicate([phone, mac]); mac.relaunch()
+        mac.set("crabboxBroker", "https://crabbox.internal"); replicate([phone, mac]); phone.relaunch()
+        phone.settings.resolve(useICloud: false); settle()
+        phone.settings.syncAgain(); settle()
+        phone.set("crabboxBroker", "http://crabbox2.mobile"); replicate([phone, mac]); mac.relaunch()
+        check(mac.value("crabboxBroker") == "https://crabbox.internal" && mac.conflictItems == ["crabboxBroker"], "the Mac keeps its own and asks (\(mac.value("crabboxBroker") ?? "nil") \(mac.conflictItems))")
+    }
+
+    print("18. Use This Device's Settings Everywhere: taken without asking, except where a device keeps its own")
+    do {
+        let (phone, mac, extra) = pair(1)
+        let ipad = extra[0]
+        phone.set("crabboxBroker", "http://crabbox.mobile"); replicate([phone, mac, ipad]); mac.relaunch(); ipad.relaunch()
+        ipad.set("crabboxBroker", "http://crabbox.ipad"); replicate([phone, mac, ipad]); phone.relaunch()
+        phone.settings.resolve(useICloud: false); settle()       // the phone keeps its broker
+        mac.set("networkEndpoint", "https://gateway.internal/v1")
+        mac.settings.sendThisDevice(); settle()
+        replicate([phone, mac, ipad]); phone.relaunch(); ipad.relaunch()
+        check(ipad.url("github") == "https://v0" && ipad.value("crabboxBroker") == "http://crabbox.mobile" && ipad.conflictItems.isEmpty, "the iPad takes the Mac's, its own broker included, without asking (\(ipad.value("crabboxBroker") ?? "nil") \(ipad.conflictItems))")
+        check(phone.value("crabboxBroker") == "http://crabbox.mobile" && phone.value("networkEndpoint") == "https://gateway.internal/v1" && phone.conflictItems.isEmpty, "the phone keeps its own broker and takes the rest (\(phone.value("crabboxBroker") ?? "nil"))")
+    }
+
+    print("19. Idle: no pushes again and again")
+    do {
+        let (phone, mac, _) = pair()
+        phone.set("crabboxBroker", "http://crabbox.mobile"); replicate([phone, mac]); mac.relaunch()
+        mac.set("crabboxBroker", "https://crabbox.internal"); replicate([phone, mac]); phone.relaunch()
+        let before = (phone.store.reads, mac.store.reads, phone.store.writes, mac.store.writes)
+        settle(); settle(); settle()
+        check(phone.store.reads == before.0 && mac.store.reads == before.1, "nothing read (\(phone.store.reads - before.0), \(mac.store.reads - before.1))")
+        check(phone.store.writes == before.2 && mac.store.writes == before.3, "nothing written")
     }
 
     print(failures == 0 ? "ALL PASSED" : "\(failures) FAILED")

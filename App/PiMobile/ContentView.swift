@@ -1143,7 +1143,7 @@ private struct SyncChoiceSheet: View {
                         VStack(alignment: .leading, spacing: 6) {
                             Text(conflict.title).font(.headline)
                             LabeledContent("This device", value: conflict.here).font(.subheadline)
-                            LabeledContent("iCloud", value: conflict.iCloud).font(.subheadline)
+                            LabeledContent(firstSync ? "iCloud" : "Other device", value: conflict.iCloud).font(.subheadline)
                         }
                         .padding(.vertical, 2)
                     }
@@ -1151,11 +1151,11 @@ private struct SyncChoiceSheet: View {
                     if firstSync {
                         Text("Settings on only one side are kept either way, and lists merge item by item. Your choice decides the ones above, on all your devices.")
                     } else {
-                        Text("Changed here and on another device, each without the other's change. Until you choose, each device keeps its own and everything else syncs. Your choice decides them on all your devices.")
+                        Text("Another device changed these differently from this one. Until you choose, this device keeps its own and everything else syncs. Keep this device's, and they stay this device's own: other devices' changes no longer apply here, and this device's stay here. Settings lists them, to sync again.")
                     }
                 }
                 Section {
-                    Button("Use iCloud's Settings") { choose(true) }
+                    Button(firstSync ? "Use iCloud's Settings" : "Use the Other Device's") { choose(true) }
                     Button("Keep This Device's Settings") { choose(false) }
                 }
             }
@@ -1966,13 +1966,19 @@ private struct SettingsView: View {
                 }
 
                 Section {
+                    if !SyncedSettings.shared.ownSettings.isEmpty {
+                        LabeledContent("Kept on this device", value: SyncedSettings.shared.ownSettings.joined(separator: ", "))
+                        Button("Sync Them Again", systemImage: "arrow.triangle.2.circlepath.icloud") {
+                            SyncedSettings.shared.syncAgain()
+                        }
+                    }
                     Button("Use This Device's Settings Everywhere", systemImage: "icloud.and.arrow.up") {
                         SyncedSettings.shared.sendThisDevice()
                     }
                 } header: {
                     Text("iCloud")
                 } footer: {
-                    Text("Sign-ins, the network server, the default model, extensions and their secrets, MCP servers and the vault sync to your devices signed in to the same Apple Account, through iCloud Keychain (end-to-end encrypted). Changes from another device apply when pi starts (extensions also when it comes to the front); the newest change wins, and lists merge item by item. An MCP server, extension secret or vault item changed differently on two devices is asked about instead of overwritten. Extensions written in pi go to your other devices through iCloud while sessions sync.")
+                    Text("Sign-ins, the network server, the default model, extensions and their secrets, MCP servers and the vault sync to your devices signed in to the same Apple Account, through iCloud Keychain (end-to-end encrypted). Changes from another device apply when pi starts (extensions also when it comes to the front); the newest change wins, and lists merge item by item. Another device's change to the network server, the Crabbox broker or an MCP server set on this one is asked about instead of applied, and so is an extension secret or vault item changed differently on two devices; what you keep stays this device's own. Extensions written in pi go to your other devices through iCloud while sessions sync.")
                 }
 
                 if app.sync.supported { SyncSettingsSection(sync: app.sync) }

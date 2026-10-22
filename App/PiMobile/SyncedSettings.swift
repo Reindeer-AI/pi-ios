@@ -9,7 +9,9 @@ import Security
 ///
 /// A device that never synced and differs from what's in iCloud asks first (`conflicts`): iCloud's, or this device's.
 /// So does one whose MCP server, extension secret or vault item another device changed differently without having seen
-/// this one's version of it (`askedKeys`): each keeps its own until the user chooses.
+/// this one's version of it (`askedKeys`), and one whose network server, Crabbox broker or MCP server set here another
+/// device changed (`perDevice`: a Mac and a phone can reach a server at different addresses). Each keeps its own until
+/// the user chooses: the other device's, or this one's, which then stays this device's own (`own`).
 ///
 /// Every device writes the whole item, so iCloud Keychain can lose one device's write to another's made before it
 /// arrived; a device that finds iCloud with an older version of what it sent sends it again.
@@ -50,6 +52,9 @@ final class SyncedSettings {
     /// change, is asked about (`conflicts`), never overwritten. In the others (extensions, extensions' data) the newest
     /// change wins.
     static let askedKeys: Set<String> = ["mcpServers", "extensionSecrets", "vaultItems"]
+    /// Settings a device may keep different from the others (a Mac and a phone can reach a server at different
+    /// addresses): another device's change to one set on this device is asked about, never applied over it.
+    static let perDevice: Set<String> = ["networkEndpoint", "networkName", "crabboxBroker", "mcpServers"]
 
     /// A setting this device and iCloud both have, differently, when this device first syncs; or list items changed
     /// differently here and on another device.
@@ -77,33 +82,63 @@ final class SyncedSettings {
         set { defaults.set(newValue, forKey: "syncJoined") }
     }
     /// When each value, and each item of a list, was last pulled or pushed here; the values then (to tell a change here).
+    // Each written only when it changed: a write is a change of the defaults, which pushes again (`observe`).
     private var syncedAt: [String: Date] {
         get { defaults.dictionary(forKey: "syncAt") as? [String: Date] ?? [:] }
-        set { defaults.set(newValue, forKey: "syncAt") }
+        set { if newValue != syncedAt { defaults.set(newValue, forKey: "syncAt") } }
     }
     private var itemsAt: [String: [String: Date]] {
         get { defaults.dictionary(forKey: "syncItemsAt") as? [String: [String: Date]] ?? [:] }
-        set { defaults.set(newValue, forKey: "syncItemsAt") }
+        set { if newValue != itemsAt { defaults.set(newValue, forKey: "syncItemsAt") } }
     }
     private var syncedValues: [String: Data] {
         get { defaults.dictionary(forKey: "syncValues") as? [String: Data] ?? [:] }
-        set { defaults.set(newValue, forKey: "syncValues") }
+        set { if newValue != syncedValues { defaults.set(newValue, forKey: "syncValues") } }
     }
     /// For each list item here, the change of it its last change came from: the newest this device had seen then (sent
     /// along, so another device tells a change made without seeing its own).
     private var itemsBase: [String: [String: Date]] {
         get { defaults.dictionary(forKey: "syncItemsBase") as? [String: [String: Date]] ?? [:] }
-        set { defaults.set(newValue, forKey: "syncItemsBase") }
+        set { if newValue != itemsBase { defaults.set(newValue, forKey: "syncItemsBase") } }
     }
     /// List items this device and another changed differently, each without the other's change: kept here as they are,
-    /// and asked about (`conflicts`).
+    /// and asked about (`conflicts`). Single values the same way.
     @ObservationIgnored private var diverged: [String: Set<String>] = [:]
+    @ObservationIgnored private var divergedValues: Set<String> = []
+    /// The `perDevice` settings (a single value: its key; a list item: "key/id") whose value here was set on this
+    /// device, not taken from another.
+    private var setHere: Set<String> {
+        get { Set(defaults.stringArray(forKey: "syncSetHere") ?? []) }
+        set { if newValue != setHere { defaults.set(newValue.sorted(), forKey: "syncSetHere") } }
+    }
+    /// Settings the user chose to keep as this device's own, as `setHere` names them: neither taken from the other
+    /// devices nor sent to them.
+    private var own: Set<String> {
+        get { Set(defaults.stringArray(forKey: "syncOwn") ?? []) }
+        set {
+            if newValue != own { defaults.set(newValue.sorted(), forKey: "syncOwn") }
+            ownSettings = Self.titles(newValue)
+        }
+    }
+    /// What this device keeps as its own, for Settings ("Crabbox", "MCP server github").
+    private(set) var ownSettings: [String] = []
+
+    private static func titles(_ names: Set<String>) -> [String] {
+        names.sorted().map { name in
+            let (key, id) = split(name)
+            return id.map { key == "mcpServers" ? "MCP server \($0)" : "\(title(key)): \($0)" } ?? title(key)
+        }
+    }
     @ObservationIgnored private var observer: NSObjectProtocol?
     @ObservationIgnored private var pending: Task<Void, Never>?
 
     /// Applies what other devices changed since this one last looked, then sends what changed here; a device that never
     /// synced and differs waits for the user (`conflicts`).
     func start() {
+        // A device that synced before settings were told apart by where they were set: what it has counts as set here,
+        // so another device's change to it is asked about once.
+        if defaults.object(forKey: "syncSetHere") == nil { defaults.set((joined ? perDeviceHere() : []).sorted(), forKey: "syncSetHere") }
+        ownSettings = Self.titles(own)
         let remote = remote()
         if !joined, !remote.isEmpty {
             conflicts = findConflicts(remote)
@@ -126,17 +161,32 @@ final class SyncedSettings {
         return !pull(remote(), only: [Self.syncedExtensionsKey]).isEmpty
     }
 
-    /// The user's choice for a device's first sync: iCloud's settings, or this device's (sent as the newest).
+    /// The user's choice. For a device's first sync: iCloud's settings, or this device's (sent as the newest). For
+    /// settings another device changed: the other device's (taken, and followed again), or this device's (kept as its
+    /// own from then on).
     func resolve(useICloud: Bool) {
-        // This device's: its single values, and its version of the list items both have, win; the rest merges.
+        // First sync, this device's: its single values, and its version of the list items both have, win; the rest
+        // merges.
         var prefer: [String: Set<String>?] = [:]
+        // Taken from iCloud whatever this device has: list items, or a single value (no items).
         var take: [String: Set<String>] = [:]
+        let first = !joined
+        var kept: Set<String> = []
         for conflict in conflicts {
-            if !useICloud { prefer[conflict.key] = conflict.items.isEmpty ? nil : Set(conflict.items) } else if !conflict.items.isEmpty { take[conflict.key] = Set(conflict.items) }
+            if useICloud {
+                take[conflict.key] = Set(conflict.items)
+            } else if first {
+                prefer[conflict.key] = conflict.items.isEmpty ? nil : Set(conflict.items)
+            } else {
+                kept.formUnion(conflict.items.isEmpty ? [conflict.key] : conflict.items.map { "\(conflict.key)/\($0)" })
+            }
         }
+        if !kept.isEmpty { log("sync", "kept as this device's own: \(kept.sorted().joined(separator: ", "))") }
+        own.formUnion(kept)
         let keys = Set(Self.keys.keys)
         conflicts = []
         diverged = [:]
+        divergedValues = []
         joined = true
         pull(remote(), prefer: prefer, take: take)
         push(prefer: prefer)
@@ -144,10 +194,27 @@ final class SyncedSettings {
         onPulled?(Array(keys))
     }
 
-    /// Sends every setting of this device as the newest: the other devices take them (and lose list items this one lacks).
+    /// Sends every setting of this device as the newest: the other devices take them without asking (and lose list items
+    /// this one lacks), except what one keeps as its own. This device's own settings sync again.
     func sendThisDevice() {
+        own = []
         push(replace: Set(Self.keys.keys))
         log("sync", "this device's settings sent to your other devices")
+    }
+
+    /// The settings this device kept as its own sync again: the other devices' versions apply here where one changed
+    /// them since, and this device's go to them otherwise.
+    func syncAgain() {
+        var take: [String: Set<String>] = [:]
+        for name in own {
+            let (key, id) = Self.split(name)
+            take[key, default: []].formUnion(id.map { [$0] } ?? [])
+        }
+        log("sync", "syncing again: \(own.sorted().joined(separator: ", "))")
+        own = []
+        pull(remote(), take: take)
+        push()
+        onPulled?(Array(take.keys))
     }
 
     private func observe() {
@@ -173,6 +240,8 @@ final class SyncedSettings {
     @discardableResult
     private func pull(_ remote: [String: [String: Any]], prefer: [String: Set<String>?] = [:], take: [String: Set<String>] = [:], only: Set<String>? = nil) -> [String] {
         var at = syncedAt, items = itemsAt, bases = itemsBase, values = syncedValues
+        var here = setHere
+        let own = own
         var applied: [String] = []
         for (key, kind) in Self.keys where only?.contains(key) ?? true {
             guard let entry = remote[key] else { continue }
@@ -180,10 +249,22 @@ final class SyncedSettings {
             let keptItems = prefer[key].flatMap { $0 } ?? []
             switch kind {
             case .value:
-                guard let changed = entry["at"] as? Date, changed > at[key] ?? .distantPast else { continue }
-                if entry["deleted"] as? Bool == true { defaults.removeObject(forKey: key) } else if let value = entry["value"] { defaults.set(value, forKey: key) }
+                guard !own.contains(key), let changed = entry["at"] as? Date, changed > at[key] ?? .distantPast else { continue }
+                let theirs = entry["deleted"] as? Bool == true ? nil : entry["value"]
+                let local = defaults.object(forKey: key).flatMap(Self.encode)
+                let differs = !Self.same(local, theirs.flatMap(Self.encode))
+                // Another device's change to a setting set here (or changed here since), not sent everywhere: kept out,
+                // and asked about.
+                if differs, take[key] == nil, Self.perDevice.contains(key), entry["everywhere"] as? Bool != true,
+                   here.contains(key) || !Self.same(local, values[key]) {
+                    divergedValues.insert(key)
+                    continue
+                }
+                if let theirs { defaults.set(theirs, forKey: key) } else { defaults.removeObject(forKey: key) }
                 at[key] = changed
                 values[key] = defaults.object(forKey: key).flatMap(Self.encode)
+                if differs { here.remove(key) }
+                divergedValues.remove(key)
             default:
                 // The other devices' changes go into the list here and into what it was when last synced; a change made
                 // here since stays to send. One that differs from this device's version of the item, and was made
@@ -192,16 +273,18 @@ final class SyncedSettings {
                 var synced = elements(kind, values[key].flatMap(Self.decode))
                 var known = items[key] ?? [:], base = bases[key] ?? [:]
                 var changed = false
-                for (id, item) in entry["items"] as? [String: [String: Any]] ?? [:] where !keptItems.contains(id) {
+                for (id, item) in entry["items"] as? [String: [String: Any]] ?? [:] where !keptItems.contains(id) && !own.contains("\(key)/\(id)") {
                     guard let when = item["at"] as? Date, when != known[id] else { continue }
                     let theirs = Self.itemValue(item)
+                    let differs = !Self.sameItem(local[id], theirs)
                     if take[key]?.contains(id) != true {
                         // Older than this device's: iCloud lost its change, which `push` sends again.
                         guard when > known[id] ?? .distantPast else { continue }
-                        if Self.askedKeys.contains(key), !Self.sameItem(local[id], theirs) {
+                        if Self.askedKeys.contains(key), differs, item["everywhere"] as? Bool != true {
                             let unsent = !Self.sameItem(local[id], synced[id])
                             let unseen = (item["base"] as? Date).map { $0 < known[id] ?? .distantPast } ?? false
-                            if unsent || unseen {
+                            let mine = Self.perDevice.contains(key) && here.contains("\(key)/\(id)")
+                            if unsent || unseen || mine {
                                 diverged[key, default: []].insert(id)
                                 continue
                             }
@@ -211,6 +294,7 @@ final class SyncedSettings {
                     synced[id] = theirs
                     known[id] = when
                     base[id] = item["base"] as? Date
+                    if differs { here.remove("\(key)/\(id)") }
                     diverged[key]?.remove(id)
                     changed = true
                 }
@@ -227,17 +311,21 @@ final class SyncedSettings {
         itemsAt = items
         itemsBase = bases
         syncedValues = values
+        setHere = here
         if !applied.isEmpty { log("sync", "from your other devices: \(applied.sorted().joined(separator: ", "))") }
         updateConflicts(remote)
         return applied
     }
 
-    /// Sends what changed here since the last sync, and what iCloud lost of this device's changes. `prefer` sends those
-    /// settings (single values, list items) as the newest whatever changed; `replace` sends those settings whole, list
-    /// items this device lacks deleted.
+    /// Sends what changed here since the last sync, and what iCloud lost of this device's changes; never what this device
+    /// keeps as its own. `prefer` sends those settings (single values, list items) as the newest whatever changed;
+    /// `replace` sends those settings whole, list items this device lacks deleted, for the other devices to take
+    /// without asking.
     private func push(prefer: [String: Set<String>?] = [:], replace: Set<String> = []) {
         guard joined else { return }
         var at = syncedAt, items = itemsAt, bases = itemsBase, values = syncedValues
+        var here = setHere
+        let own = own
         var merged = remote()
         var sent: [String] = [], again: [String] = []
         var adopted = false
@@ -250,13 +338,31 @@ final class SyncedSettings {
             let preferredItems = prefer[key].flatMap { $0 } ?? []
             switch kind {
             case .value:
+                guard !own.contains(key) else { continue }
                 let theirs = merged[key]?["at"] as? Date
                 if forced || !Self.same(encoded, values[key]) {
+                    if !forced, Self.perDevice.contains(key), let theirs, theirs > at[key] ?? .distantPast {
+                        // Another device changed it too since this one last synced it: the same change, or asked about.
+                        let other = merged[key].flatMap { $0["deleted"] as? Bool == true ? nil : $0["value"] }.flatMap(Self.encode)
+                        if Self.same(encoded, other) {
+                            at[key] = theirs
+                            values[key] = encoded
+                            divergedValues.remove(key)
+                            adopted = true
+                        } else {
+                            divergedValues.insert(key)
+                        }
+                        continue
+                    }
                     // Newer than what it replaces even on a clock behind.
                     let when = max(now, max(at[key] ?? .distantPast, theirs ?? .distantPast).addingTimeInterval(0.001))
-                    merged[key] = encoded == nil ? ["deleted": true, "at": when] : ["value": value!, "at": when]
+                    var entry: [String: Any] = encoded == nil ? ["deleted": true, "at": when] : ["value": value!, "at": when]
+                    if replacing { entry["everywhere"] = true }
+                    merged[key] = entry
                     at[key] = when
                     values[key] = encoded
+                    if Self.perDevice.contains(key) { here.insert(key) }
+                    divergedValues.remove(key)
                     sent.append(key)
                 } else if let had = at[key], theirs.map({ $0 < had }) ?? true {
                     // iCloud has an older change than this device's (another device's write crossed it): again.
@@ -272,7 +378,7 @@ final class SyncedSettings {
                 var synced = before
                 var changed = 0, resent = 0
                 var keptOwn = false
-                for id in Set(current.keys).union(before.keys).union(known.keys) {
+                for id in Set(current.keys).union(before.keys).union(known.keys) where !own.contains("\(key)/\(id)") {
                     let mine = current[id]
                     let theirs = remoteItems[id]
                     let theirsAt = theirs?["at"] as? Date
@@ -307,10 +413,11 @@ final class SyncedSettings {
                     }
                     let from = max(known[id] ?? Self.nothingSeen, theirsAt ?? Self.nothingSeen)
                     let when = max(now, from.addingTimeInterval(0.001))
-                    remoteItems[id] = Self.item(mine, at: when, base: from)
+                    remoteItems[id] = Self.item(mine, at: when, base: from, everywhere: replacing)
                     known[id] = when
                     base[id] = from
                     synced[id] = mine
+                    if Self.perDevice.contains(key) { here.insert("\(key)/\(id)") }
                     diverged[key]?.remove(id)
                     changed += 1
                 }
@@ -334,6 +441,7 @@ final class SyncedSettings {
             itemsAt = items
             itemsBase = bases
             syncedValues = values
+            setHere = here
             if !sent.isEmpty { log("sync", "sent: \(sent.sorted().joined(separator: ", "))") }
             if !again.isEmpty { log("sync", "sent again (iCloud had an older change): \(again.sorted().joined(separator: ", "))") }
         } catch {
@@ -341,12 +449,17 @@ final class SyncedSettings {
         }
     }
 
-    /// The list items that diverged, as asked of the user; a device's first sync asks its own (`findConflicts`).
+    /// The settings that diverged, as asked of the user; a device's first sync asks its own (`findConflicts`).
     private func updateConflicts(_ remote: [String: [String: Any]]) {
         guard joined else { return }
         let asked = diverged.filter { !$0.value.isEmpty }
         let before = conflicts.map { "\($0.key)/\($0.items)" }
-        conflicts = asked.compactMap { key, ids -> Conflict? in
+        let values = divergedValues.map { key -> Conflict in
+            let there = remote[key].flatMap { $0["deleted"] as? Bool == true ? nil : $0["value"] }
+            return Conflict(key: key, title: Self.title(key), here: defaults.object(forKey: key).map { Self.describe(key, $0) } ?? "none",
+                            iCloud: there.map { Self.describe(key, $0) } ?? "none")
+        }
+        conflicts = (values + asked.compactMap { key, ids -> Conflict? in
             guard let kind = Self.keys[key] else { return nil }
             let here = elements(kind, defaults.object(forKey: key))
             let there = (remote[key]?["items"] as? [String: [String: Any]] ?? [:]).mapValues(Self.itemValue)
@@ -355,10 +468,10 @@ final class SyncedSettings {
                             here: sorted.map { Self.describe(key, id: $0, here[$0], other: there[$0] ?? nil) }.joined(separator: "; "),
                             iCloud: sorted.map { Self.describe(key, id: $0, there[$0] ?? nil, other: here[$0]) }.joined(separator: "; "),
                             items: sorted)
-        }
+        })
         .sorted { $0.title < $1.title }
         if conflicts.map({ "\($0.key)/\($0.items)" }) != before, !conflicts.isEmpty {
-            log("sync", "changed here and on another device differently: \(conflicts.map { "\($0.key) \($0.items.joined(separator: ", "))" }.joined(separator: "; ")); asking")
+            log("sync", "another device changed differently: \(conflicts.map { "\($0.key) \($0.items.joined(separator: ", "))" }.joined(separator: "; ")); asking")
         }
     }
 
@@ -386,7 +499,8 @@ final class SyncedSettings {
 
     private static func title(_ key: String) -> String {
         switch key {
-        case "networkEndpoint", "networkName": "Network server"
+        case "networkEndpoint": "Network server"
+        case "networkName": "Network server's name"
         case "defaultModel": "Default model"
         case "defaultThinkingLevel": "Default thinking level"
         case "githubIdentity", "githubTokenExpiry": "GitHub account"
@@ -481,12 +595,30 @@ final class SyncedSettings {
     /// The change an item new here was made from: none (a date any plist reader takes, unlike `Date.distantPast`).
     private static let nothingSeen = Date(timeIntervalSince1970: 0)
 
-    /// An item as iCloud keeps it: its value (none: deleted), when it changed, and the change it was made from.
-    private static func item(_ value: Any?, at: Date, base: Date?) -> [String: Any] {
+    /// An item as iCloud keeps it: its value (none: deleted), when it changed, the change it was made from, and whether
+    /// it was sent everywhere (taken without asking).
+    private static func item(_ value: Any?, at: Date, base: Date?, everywhere: Bool = false) -> [String: Any] {
         var item: [String: Any] = value.map { ["value": $0] } ?? ["deleted": true]
         item["at"] = at
         if let base { item["base"] = base }
+        if everywhere { item["everywhere"] = true }
         return item
+    }
+
+    /// A setting's name in `setHere` and `own`: its key, and a list item's id after a slash.
+    private static func split(_ name: String) -> (key: String, id: String?) {
+        guard let slash = name.firstIndex(of: "/") else { return (name, nil) }
+        return (String(name[..<slash]), String(name[name.index(after: slash)...]))
+    }
+
+    /// The `perDevice` settings this device has, by name.
+    private func perDeviceHere() -> Set<String> {
+        var names: Set<String> = []
+        for key in Self.perDevice {
+            guard let kind = Self.keys[key], let value = defaults.object(forKey: key) else { continue }
+            if case .value = kind { names.insert(key) } else { names.formUnion(elements(kind, value).keys.map { "\(key)/\($0)" }) }
+        }
+        return names
     }
 
     /// An iCloud item's value; nil for a deleted one.
