@@ -355,7 +355,7 @@ private struct SessionView: View {
     @State private var title = ""
     @State private var showingBrowser = false
     @State private var dictation = Dictation()
-    @FocusState private var composing: Bool
+    @State private var composing = false
     /// Files to go with the next message (picked, or dropped on the session).
     @State private var attachments: [StagedFile] = []
     @State private var importingFiles = false
@@ -793,12 +793,20 @@ private struct SessionView: View {
             guard let data = try? await item.loadTransferable(type: Data.self) else { continue }
             // As a JPEG (pi's read tool takes JPEG, PNG, GIF and WebP, not HEIC).
             let jpeg = UIImage(data: data)?.jpegData(compressionQuality: 0.9) ?? data
-            let stamp = Date.now.formatted(Date.VerbatimFormatStyle(
-                format: "\(year: .defaultDigits)-\(month: .twoDigits)-\(day: .twoDigits) at \(hour: .twoDigits(clock: .twentyFourHour, hourCycle: .zeroBased)).\(minute: .twoDigits).\(second: .twoDigits)",
-                timeZone: .current, calendar: .current))
-            if let file = try? StagedFile.write(jpeg, named: "Photo \(stamp)\(items.count > 1 ? " \(index + 1)" : "").jpg") { attachments.append(file) }
+            if let file = try? StagedFile.write(jpeg, named: "Photo \(StagedFile.stamp)\(items.count > 1 ? " \(index + 1)" : "").jpg") { attachments.append(file) }
         }
     }
+
+    /// Images pasted in the message box.
+    private func stage(_ images: [PastedImage]) {
+        let stamp = StagedFile.stamp
+        for (index, image) in images.enumerated() {
+            let name = "Pasted image \(stamp)\(images.count > 1 ? " \(index + 1)" : "").\(image.fileExtension)"
+            do { attachments.append(try StagedFile.write(image.data, named: name)) } catch { log("error", "[\(id)] paste \(name): \(error.localizedDescription)") }
+        }
+    }
+
+    private var placeholder: String { dictation.listening ? "Listening…" : session?.running == true ? "Steer pi" : "Message pi" }
 
     private var messageField: some View {
         HStack(alignment: .bottom) {
@@ -847,9 +855,13 @@ private struct SessionView: View {
                     photoItems = []
                 }
             }
-            TextField(dictation.listening ? "Listening…" : session?.running == true ? "Steer pi" : "Message pi", text: $prompt, axis: .vertical)
-                .lineLimit(1...6)
-                .focused($composing)
+            // Return sends with a keyboard (⌘Return for a new line); a pasted image goes with the message.
+            MessageEditor(text: $prompt, focused: $composing, label: placeholder, send: { if canSend { send() } }, paste: stage)
+                .overlay(alignment: .topLeading) {
+                    if prompt.isEmpty {
+                        Text(placeholder).foregroundStyle(Color(.placeholderText)).allowsHitTesting(false).accessibilityHidden(true)
+                    }
+                }
                 .padding(.horizontal, 14)
                 .padding(.vertical, 9)
                 .background(Color(.secondarySystemBackground), in: .rect(cornerRadius: 20))

@@ -24,6 +24,13 @@ struct StagedFile: Identifiable, Equatable {
         return StagedFile(url: target)
     }
 
+    /// Now, as a file's name says it ("2026-10-24 at 10.15.30", as iOS names screenshots).
+    static var stamp: String {
+        Date.now.formatted(Date.VerbatimFormatStyle(
+            format: "\(year: .defaultDigits)-\(month: .twoDigits)-\(day: .twoDigits) at \(hour: .twoDigits(clock: .twentyFourHour, hourCycle: .zeroBased)).\(minute: .twoDigits).\(second: .twoDigits)",
+            timeZone: .current, calendar: .current))
+    }
+
     /// Bytes (a photo) as a file named `name`.
     static func write(_ data: Data, named name: String) throws -> StagedFile {
         let folder = URL.temporaryDirectory.appending(path: "pi-attachments/\(UUID().uuidString)", directoryHint: .isDirectory)

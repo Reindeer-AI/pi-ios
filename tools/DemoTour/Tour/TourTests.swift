@@ -1,3 +1,4 @@
+import UIKit
 import XCTest
 
 /// Demo tours of pi, run on a phone or Simulator while its screen is recorded: XCUITest taps through the installed app
@@ -69,7 +70,7 @@ final class TourTests: XCTestCase {
 
         tap(pi.buttons["New session"].firstMatch)
         pause(1.5)
-        let message = pi.textFields["Message pi"]
+        let message = pi.textViews["Message pi"]
         tap(message)
         message.typeText("Write a pi extension with a tool show_weather(city) that gets the current weather from Open-Meteo (no key needed) and shows it as a widget above the message box with ctx.ui.setWidget, with a line saying whether WEATHER_API_KEY is set and its length (never the key). Add it to this session and show the weather in Tel Aviv.")
         pause(1)
@@ -126,7 +127,7 @@ final class TourTests: XCTestCase {
         launchReady()
         tap(pi.buttons["New session"].firstMatch)
         pause(1.5)
-        let message = pi.textFields["Message pi"]
+        let message = pi.textViews["Message pi"]
         tap(message)
         message.typeText(prompt)
         pause(1)
@@ -147,7 +148,7 @@ final class TourTests: XCTestCase {
             let elapsed = Date().timeIntervalSince(started)
             if let text = steer, elapsed >= steerAfter, stop.exists {
                 steer = nil
-                let field = pi.textFields["Steer pi"]
+                let field = pi.textViews["Steer pi"]
                 tap(field)
                 field.typeText(text)
                 pause(1)
@@ -195,7 +196,7 @@ final class TourTests: XCTestCase {
         let hide = pi.buttons["Hide keyboard"].firstMatch
         let stop = pi.buttons["Stop"].firstMatch
         func send(_ message: String, hideKeyboard: Bool = true) {
-            let field = pi.textFields["Message pi"]
+            let field = pi.textViews["Message pi"]
             tap(field)
             field.typeText(message)
             pause(1)
@@ -258,7 +259,7 @@ final class TourTests: XCTestCase {
         let hide = pi.buttons["Hide keyboard"].firstMatch
         let stop = pi.buttons["Stop"].firstMatch
         func send(_ message: String) {
-            let field = pi.textFields["Message pi"]
+            let field = pi.textViews["Message pi"]
             tap(field)
             field.typeText(message)
             pause(1)
@@ -449,7 +450,7 @@ final class TourTests: XCTestCase {
         let hide = pi.buttons["Hide keyboard"].firstMatch
         let stop = pi.buttons["Stop"].firstMatch
         func ask(_ message: String) {
-            let field = pi.textFields["Message pi"]
+            let field = pi.textViews["Message pi"]
             tap(field)
             field.typeText(message)
             pause(1)
@@ -496,7 +497,7 @@ final class TourTests: XCTestCase {
         let hide = pi.buttons["Hide keyboard"].firstMatch
         let stop = pi.buttons["Stop"].firstMatch
         func send(_ message: String) {
-            let field = pi.textFields["Message pi"]
+            let field = pi.textViews["Message pi"]
             tap(field)
             field.typeText(message)
             pause(1)
@@ -599,7 +600,7 @@ final class TourTests: XCTestCase {
         let hide = pi.buttons["Hide keyboard"].firstMatch
         let stop = pi.buttons["Stop"].firstMatch
         func send(_ message: String) {
-            let field = pi.textFields["Message pi"]
+            let field = pi.textViews["Message pi"]
             tap(field)
             field.typeText(message)
             pause(1)
@@ -705,7 +706,7 @@ final class TourTests: XCTestCase {
         launchReady()
         tap(pi.buttons["New session"].firstMatch)
         pause(1.5)
-        let field = pi.textFields["Message pi"]
+        let field = pi.textViews["Message pi"]
         tap(field)
         field.typeText("/flights")
         pause(1)
@@ -740,7 +741,7 @@ final class TourTests: XCTestCase {
         let stop = pi.buttons["Stop"].firstMatch
         let minimize = pi.buttons["Minimize"].firstMatch
         func send(_ message: String) {
-            let field = pi.textFields["Message pi"]
+            let field = pi.textViews["Message pi"]
             tap(field)
             field.typeText(message)
             pause(1)
@@ -842,7 +843,7 @@ final class TourTests: XCTestCase {
         launchReady()
         tap(pi.buttons["New session"].firstMatch)
         pause(1.5)
-        let message = pi.textFields["Message pi"]
+        let message = pi.textViews["Message pi"]
         tap(message)
         message.typeText("/personal")
         pause(1)
@@ -1099,7 +1100,7 @@ final class TourTests: XCTestCase {
         launchReady()
         tap(pi.buttons["New session"].firstMatch)
         pause(1.5)
-        let message = pi.textFields["Message pi"]
+        let message = pi.textViews["Message pi"]
         let stop = pi.buttons["Stop"].firstMatch
         func ask(_ text: String) {
             tap(message)
@@ -1148,7 +1149,7 @@ final class TourTests: XCTestCase {
         tap(pi.buttons["New session"].firstMatch)
         pause(1.5)
         let marker = "Fork test \(Int(Date().timeIntervalSince1970) % 100000)"
-        let message = pi.textFields["Message pi"]
+        let message = pi.textViews["Message pi"]
         tap(message)
         message.typeText("\(marker): reply with the word ok, nothing else.")
         tap(pi.buttons["Send"].firstMatch)
@@ -1200,7 +1201,7 @@ final class TourTests: XCTestCase {
         done.tap()
         let chip = pi.buttons.matching(NSPredicate(format: "label BEGINSWITH %@", "Remove Photo")).firstMatch
         XCTAssertTrue(chip.waitForExistence(timeout: 10), "the photo waits as a chip")
-        let message = pi.textFields["Message pi"]
+        let message = pi.textViews["Message pi"]
         tap(message)
         message.typeText("What's in the photo I attached? Answer in one short sentence.")
         tap(pi.buttons["Send"].firstMatch)
@@ -1228,7 +1229,7 @@ final class TourTests: XCTestCase {
         launchReady()
         // The newest session (it has messages, so the context ring shows).
         tap(pi.buttons.matching(NSPredicate(format: "label CONTAINS %@", " · ")).firstMatch)
-        let message = pi.textFields["Message pi"]
+        let message = pi.textViews["Message pi"]
         tap(message)
         pause(1)
         // pi's mic by its identifier: the keyboard has a Dictate key too.
@@ -1247,9 +1248,42 @@ final class TourTests: XCTestCase {
         let square = buttons.map(\.frame)
         print("composer wrapped: \(square.map { "(\(Int($0.midX)),\(Int($0.midY)))" })")
         XCTAssertEqual(rows(square), 2, "two rows beside a wrapped message")
-        let typed = pi.textFields.matching(NSPredicate(format: "value BEGINSWITH %@", "A longer message")).firstMatch
+        let typed = pi.textViews.matching(NSPredicate(format: "value BEGINSWITH %@", "A longer message")).firstMatch
         XCTAssertLessThan(typed.frame.minX, row.map(\.maxX).max()!, "the message is wider")
         pause(2)
+    }
+
+    /// Text pastes in the message box as text; an image waits as a chip (no text pasted), and goes with the message.
+    /// (Return and ⌘Return need a hardware keyboard, which XCUITest's typeKey doesn't press in Simulator.)
+    func testPasteImage() throws {
+        executionTimeAllowance = 3 * 60
+        launchReady()
+        tap(pi.buttons["New session"].firstMatch)
+        pause(1.5)
+        let message = pi.textViews["Message pi"]
+        UIPasteboard.general.string = "pasted text"
+        tap(message)
+        message.press(forDuration: 1.2)
+        tap(pi.menuItems["Paste"].firstMatch)
+        XCTAssertEqual(message.value as? String, "pasted text", "text pastes as text")
+        message.typeText(String(repeating: XCUIKeyboardKey.delete.rawValue, count: "pasted text".count))
+        UIPasteboard.general.image = UIGraphicsImageRenderer(size: CGSize(width: 120, height: 80)).image { context in
+            UIColor.systemTeal.setFill()
+            context.fill(CGRect(x: 0, y: 0, width: 120, height: 80))
+        }
+        message.press(forDuration: 1.2)
+        tap(pi.menuItems["Paste"].firstMatch)
+        let chip = pi.buttons.matching(NSPredicate(format: "label BEGINSWITH %@", "Remove Pasted image")).firstMatch
+        XCTAssertTrue(chip.waitForExistence(timeout: 5), "the pasted image waits as a chip")
+        XCTAssertEqual(message.value as? String ?? "", "", "no text pasted")
+        message.typeText("What color is the attached image? One word.")
+        tap(pi.buttons["Send"].firstMatch)
+        // As a PNG, as it was copied.
+        let sent = pi.descendants(matching: .any).matching(NSPredicate(format: "label BEGINSWITH %@ AND label ENDSWITH %@", "Attached Pasted image", ".png")).firstMatch
+        XCTAssertTrue(sent.waitForExistence(timeout: 5), "the message went with the image")
+        let stop = pi.buttons["Stop"].firstMatch
+        if stop.waitForExistence(timeout: 10) { tap(stop) }
+        pause(1)
     }
 
     /// iCloud sync, a device's first time, differing from iCloud (set up before the test: no sync state, another network
@@ -1326,7 +1360,7 @@ final class TourTests: XCTestCase {
     func testScreenshotSessions() throws {
         executionTimeAllowance = 40 * 60
         launchReady()
-        let message = pi.textFields["Message pi"]
+        let message = pi.textViews["Message pi"]
         let stop = pi.buttons["Stop"].firstMatch
         for prompt in Self.screenshotPrompts {
             tap(pi.buttons["New session"].firstMatch)
@@ -1446,7 +1480,7 @@ final class TourTests: XCTestCase {
         launchReady()
         tap(pi.buttons["New session"].firstMatch)
         pause(1.5)
-        let message = pi.textFields["Message pi"]
+        let message = pi.textViews["Message pi"]
         let stop = pi.buttons["Stop"].firstMatch
         tap(message)
         message.typeText("Reply with only a Python code block that prints copy test, nothing else.")
@@ -1588,7 +1622,7 @@ final class TourTests: XCTestCase {
         if pi.buttons["Done"].exists { pi.buttons["Done"].firstMatch.tap() }
         tap(pi.buttons["New session"].firstMatch)
         pause(1.5)
-        let message = pi.textFields["Message pi"]
+        let message = pi.textViews["Message pi"]
         let stop = pi.buttons["Stop"].firstMatch
         func command(_ text: String) {
             tap(message)
@@ -1602,7 +1636,7 @@ final class TourTests: XCTestCase {
         command("/busywait")
         let working = pi.staticTexts["busytest: /busywait"]
         XCTAssertTrue(working.waitForExistence(timeout: 5), "the indicator names the extension and its command")
-        let field = pi.textFields.firstMatch
+        let field = pi.textViews.firstMatch
         tap(field)
         field.typeText("Reply with exactly the word yes.")
         tap(pi.buttons["Steer"].firstMatch)
@@ -1653,7 +1687,7 @@ final class TourTests: XCTestCase {
         launchReady()
         tap(pi.buttons["New session"].firstMatch)
         pause(1.5)
-        let message = pi.textFields["Message pi"]
+        let message = pi.textViews["Message pi"]
         let stop = pi.buttons["Stop"].firstMatch
         tap(message)
         message.typeText("Use the bash tool to run exactly: sleep 30. Then reply with exactly the word late.")
@@ -1661,7 +1695,7 @@ final class TourTests: XCTestCase {
         XCTAssertTrue(stop.waitForExistence(timeout: 20), "the run")
         let sleeping = pi.staticTexts.matching(NSPredicate(format: "label CONTAINS %@", "sleep 30")).firstMatch
         XCTAssertTrue(sleeping.waitForExistence(timeout: 60), "the sleep running")
-        let field = pi.textFields.firstMatch
+        let field = pi.textViews.firstMatch
         // One queued first (Steer), then Send now.
         tap(field)
         field.typeText("Remember the word one.")
@@ -1698,7 +1732,7 @@ final class TourTests: XCTestCase {
         launchReady()
         tap(pi.buttons["New session"].firstMatch)
         pause(1.5)
-        let message = pi.textFields["Message pi"]
+        let message = pi.textViews["Message pi"]
         let stop = pi.buttons["Stop"].firstMatch
         let queuedLabel = pi.staticTexts["Steering: after the current step"]
         func runSleep(_ word: String) {
@@ -1710,7 +1744,7 @@ final class TourTests: XCTestCase {
             XCTAssertTrue(tool.waitForExistence(timeout: 60), "the sleep running")
         }
         func steer(_ text: String) {
-            let field = pi.textFields.firstMatch
+            let field = pi.textViews.firstMatch
             tap(field)
             field.typeText(text)
             tap(pi.buttons["Steer"].firstMatch)
@@ -1735,7 +1769,7 @@ final class TourTests: XCTestCase {
         tap(pi.buttons["Cancel queued message"].firstMatch)
         pause(1.5)
         XCTAssertFalse(queuedLabel.exists, "out of the queue")
-        let box = pi.textFields.firstMatch.value as? String ?? ""
+        let box = pi.textViews.firstMatch.value as? String ?? ""
         print("box after cancel: \(box)")
         XCTAssertTrue(box.contains("This one is taken back."), "its text back in the message box")
         let end2 = Date().addingTimeInterval(2 * 60)
@@ -1755,7 +1789,7 @@ final class TourTests: XCTestCase {
         launchReady()
         tap(pi.buttons["New session"].firstMatch)
         pause(1.5)
-        let message = pi.textFields["Message pi"]
+        let message = pi.textViews["Message pi"]
         let stop = pi.buttons["Stop"].firstMatch
         // A reply first, so the context gauge joins the buttons (four of them, two columns when they go two by two).
         tap(message)
@@ -1769,7 +1803,7 @@ final class TourTests: XCTestCase {
         message.typeText("!sleep 60")
         tap(pi.buttons["Send"].firstMatch)
         XCTAssertTrue(stop.waitForExistence(timeout: 15), "the command running")
-        let field = pi.textFields.firstMatch
+        let field = pi.textViews.firstMatch
         tap(field)
         let text = "Also check whether the README mentions the license, and which one it is, please"
         for character in text {
@@ -1806,7 +1840,7 @@ final class TourTests: XCTestCase {
             tap(pi.buttons[level].firstMatch)
             pause(1.5)
         }
-        let message = pi.textFields["Message pi"]
+        let message = pi.textViews["Message pi"]
         let stop = pi.buttons["Stop"].firstMatch
         func ask(_ prompt: String) {
             tap(message)
@@ -1859,7 +1893,7 @@ final class TourTests: XCTestCase {
         tap(pi.buttons["Add to Every Session"].firstMatch)
         pause(2)
         if pi.buttons["Done"].exists { pi.buttons["Done"].firstMatch.tap() }
-        let message = pi.textFields["Message pi"]
+        let message = pi.textViews["Message pi"]
         func command(_ text: String) {
             tap(message)
             message.typeText(text)
@@ -2007,7 +2041,7 @@ final class TourTests: XCTestCase {
         print("REVIEW: session")
         tap(newSession)
         pause(1.5)
-        let message = pi.textFields["Message pi"]
+        let message = pi.textViews["Message pi"]
         let stop = pi.buttons["Stop"].firstMatch
         func ask(_ prompt: String, minutes: Double) {
             tap(message)
@@ -2119,7 +2153,7 @@ final class TourTests: XCTestCase {
         launchReady()
         tap(pi.buttons["New session"].firstMatch)
         pause(1.5)
-        let message = pi.textFields["Message pi"]
+        let message = pi.textViews["Message pi"]
         tap(message)
         message.typeText("Write 50 numbered paragraphs, three sentences each, every one about a different animal. No tools.")
         tap(pi.buttons["Send"].firstMatch)
@@ -2159,7 +2193,7 @@ final class TourTests: XCTestCase {
         launchReady()
         tap(pi.buttons["New session"].firstMatch)
         pause(1.5)
-        let message = pi.textFields["Message pi"]
+        let message = pi.textViews["Message pi"]
         tap(message)
         message.typeText("!python3 -c import\\ asyncio,ctypes,hashlib,sqlite3,ssl,compression.zstd\\;print\\(37\\*41\\)")
         tap(pi.buttons["Send"].firstMatch)
@@ -2244,7 +2278,7 @@ final class TourTests: XCTestCase {
         launchReady()
         tap(pi.buttons["New session"].firstMatch)
         pause(1.5)
-        let message = pi.textFields["Message pi"]
+        let message = pi.textViews["Message pi"]
         tap(message)
         message.typeText("Call the extension_add tool once with source github:example/pi-extension-demo, then tell me exactly what it returned.")
         tap(pi.buttons["Send"].firstMatch)
@@ -2290,7 +2324,7 @@ final class TourTests: XCTestCase {
         tap(pi.buttons["Add to Every Session"].firstMatch)
         pause(2)
         if pi.buttons["Done"].exists { pi.buttons["Done"].firstMatch.tap() }
-        let message = pi.textFields["Message pi"]
+        let message = pi.textViews["Message pi"]
         func openApp() {
             tap(message)
             message.typeText("/permtest")
@@ -2483,7 +2517,7 @@ final class TourTests: XCTestCase {
         tap(pi.buttons["Add to Every Session"].firstMatch)
         pause(2)
         if pi.buttons["Done"].exists { pi.buttons["Done"].firstMatch.tap() }
-        let message = pi.textFields["Message pi"]
+        let message = pi.textViews["Message pi"]
         func send(_ text: String) {
             tap(message)
             message.typeText(text)
@@ -2555,7 +2589,7 @@ final class TourTests: XCTestCase {
         print("shared session sheet: \(pi.staticTexts.allElementsBoundByIndex.prefix(12).map(\.label))")
         pause(1.5)
         open.tap()
-        XCTAssertTrue(pi.textFields["Message pi"].waitForExistence(timeout: 30), "the session opens")
+        XCTAssertTrue(pi.textViews["Message pi"].waitForExistence(timeout: 30), "the session opens")
         pause(3)
         print("opened shared session: \(pi.navigationBars.firstMatch.staticTexts.allElementsBoundByIndex.map(\.label))")
     }
@@ -2567,7 +2601,7 @@ final class TourTests: XCTestCase {
         launchReady()
         tap(pi.buttons["New session"].firstMatch)
         pause(1.5)
-        let message = pi.textFields["Message pi"]
+        let message = pi.textViews["Message pi"]
         tap(message)
         message.typeText("/personal")
         tap(pi.buttons["Send"].firstMatch)
@@ -2584,7 +2618,7 @@ final class TourTests: XCTestCase {
         launchReady()
         tap(pi.buttons["New session"].firstMatch)
         pause(1.5)
-        let field = pi.textFields["Message pi"]
+        let field = pi.textViews["Message pi"]
         tap(field)
         field.typeText("/flights")
         pause(1)
@@ -2593,17 +2627,17 @@ final class TourTests: XCTestCase {
         XCTAssertTrue(minimize.waitForExistence(timeout: 20), "the app opened")
         pause(2)
         XCTAssertTrue(pi.textFields["First name"].exists, "its page")
-        XCTAssertTrue(pi.textFields["Message pi"].isHittable, "beside the session, whose message box is still there")
+        XCTAssertTrue(pi.textViews["Message pi"].isHittable, "beside the session, whose message box is still there")
         // Expanded across the screen, and back beside the session.
         tap(pi.buttons["Expand"].firstMatch)
         XCTAssertTrue(pi.buttons["Collapse"].firstMatch.waitForExistence(timeout: 5), "expanded")
         pause(1.5)
         XCTAssertTrue(pi.textFields["First name"].exists, "the same page, expanded")
-        XCTAssertFalse(pi.textFields["Message pi"].isHittable, "across the session")
+        XCTAssertFalse(pi.textViews["Message pi"].isHittable, "across the session")
         tap(pi.buttons["Collapse"].firstMatch)
         XCTAssertTrue(pi.buttons["Expand"].firstMatch.waitForExistence(timeout: 5), "beside the session again")
         pause(1.5)
-        XCTAssertTrue(pi.textFields["Message pi"].isHittable, "the message box again")
+        XCTAssertTrue(pi.textViews["Message pi"].isHittable, "the message box again")
         tap(minimize)
         let dock = pi.buttons.matching(NSPredicate(format: "label BEGINSWITH %@", "Flights. Open app")).firstMatch
         XCTAssertTrue(dock.waitForExistence(timeout: 5), "in the dock")
@@ -2636,7 +2670,7 @@ final class TourTests: XCTestCase {
         launchReady()
         tap(pi.buttons["New session"].firstMatch)
         pause(1.5)
-        tap(pi.textFields["Message pi"])
+        tap(pi.textViews["Message pi"])
         pause(3)
         let hide = pi.buttons["Hide keyboard"].firstMatch
         if hide.exists { tap(hide) }
@@ -2649,14 +2683,14 @@ final class TourTests: XCTestCase {
         let row = pi.buttons.matching(NSPredicate(format: "label BEGINSWITH %@", ProcessInfo.processInfo.environment["PI_SESSION"] ?? "In two")).firstMatch
         tap(row)
         pause(3)
-        tap(pi.textFields["Message pi"])
+        tap(pi.textViews["Message pi"])
         pause(3)
         let hide = pi.buttons["Hide keyboard"].firstMatch
         if hide.exists { tap(hide) }
         pause(1)
         XCUIDevice.shared.orientation = .landscapeLeft
         pause(4)
-        tap(pi.textFields["Message pi"])
+        tap(pi.textViews["Message pi"])
         pause(3)
         if hide.exists { tap(hide) }
         pause(2)
@@ -2782,7 +2816,7 @@ final class TourTests: XCTestCase {
         tap(pi.buttons["Add to Every Session"].firstMatch)
         pause(2)
         if pi.buttons["Done"].exists { pi.buttons["Done"].firstMatch.tap() }
-        let message = pi.textFields["Message pi"]
+        let message = pi.textViews["Message pi"]
         func command(_ text: String) {
             tap(message)
             message.typeText(text)
@@ -2911,7 +2945,7 @@ final class TourTests: XCTestCase {
         tap(pi.buttons["Add to Every Session"].firstMatch)
         pause(2)
         if pi.buttons["Done"].exists { pi.buttons["Done"].firstMatch.tap() }
-        let message = pi.textFields["Message pi"]
+        let message = pi.textViews["Message pi"]
         func command(_ text: String) {
             tap(message)
             message.typeText(text)
@@ -3004,7 +3038,7 @@ final class TourTests: XCTestCase {
         tap(pi.buttons["Add to Every Session"].firstMatch)
         pause(2)
         if pi.buttons["Done"].exists { pi.buttons["Done"].firstMatch.tap() }
-        let message = pi.textFields["Message pi"]
+        let message = pi.textViews["Message pi"]
         tap(pi.buttons["New session"].firstMatch)
         pause(1.5)
         tap(message)
@@ -3025,7 +3059,7 @@ final class TourTests: XCTestCase {
             let seconds = Date().timeIntervalSince(start)
             print("typing \(label): \(String(format: "%.2f", seconds)) s for \(sentence.count) characters")
             // With text in it, the box no longer goes by its placeholder.
-            pi.textFields.firstMatch.typeText(String(repeating: XCUIKeyboardKey.delete.rawValue, count: sentence.count))
+            pi.textViews.firstMatch.typeText(String(repeating: XCUIKeyboardKey.delete.rawValue, count: sentence.count))
         }
         timeTyping("as it filled")
         pi.terminate()
@@ -3040,8 +3074,8 @@ final class TourTests: XCTestCase {
         let options = XCTMeasureOptions()
         options.iterationCount = 3
         measure(metrics: [XCTCPUMetric(application: pi), XCTClockMetric()], options: options) {
-            pi.textFields.firstMatch.typeText(sentence)
-            pi.textFields.firstMatch.typeText(String(repeating: XCUIKeyboardKey.delete.rawValue, count: sentence.count))
+            pi.textViews.firstMatch.typeText(sentence)
+            pi.textViews.firstMatch.typeText(String(repeating: XCUIKeyboardKey.delete.rawValue, count: sentence.count))
         }
 
         // Only its latest rows loaded (150): at their top (a tap on the status bar), Earlier messages loads the page before,
@@ -3153,7 +3187,7 @@ final class TourTests: XCTestCase {
     }
 
     private func run(_ command: String) {
-        let message = pi.textFields["Message pi"]
+        let message = pi.textViews["Message pi"]
         tap(message)
         message.typeText(command)
         tap(pi.buttons["Send"].firstMatch)
@@ -3182,9 +3216,9 @@ final class TourTests: XCTestCase {
         row.tap()
         pause(1)
         XCTAssertTrue(element(containing: "synced from the iPhone").waitForExistence(timeout: 15), "its history came")
-        XCTAssertFalse(pi.textFields["Message pi"].exists, "read-only while the iPhone has it")
+        XCTAssertFalse(pi.textViews["Message pi"].exists, "read-only while the iPhone has it")
         tap(pi.buttons["continueHere"])
-        XCTAssertTrue(pi.textFields["Message pi"].waitForExistence(timeout: 20), "the Mac's now")
+        XCTAssertTrue(pi.textViews["Message pi"].waitForExistence(timeout: 20), "the Mac's now")
         XCTAssertTrue(element(containing: "Moved from iPhone to Mac").waitForExistence(timeout: 10), "the agent's note that it moved")
         run("!cat note.txt > seen.txt; echo continued on the Mac >> seen.txt")
         XCTAssertTrue(element(containing: "continued on the Mac").waitForExistence(timeout: 15), "the command ran")
@@ -3203,7 +3237,7 @@ final class TourTests: XCTestCase {
         XCTAssertTrue(element(containing: "continued on the Mac").waitForExistence(timeout: 15), "the Mac's command came")
         XCTAssertTrue(element(containing: "Moved from iPhone to Mac").exists, "the note that it moved")
         XCTAssertTrue(pi.buttons["continueHere"].exists, "read-only here")
-        XCTAssertFalse(pi.textFields["Message pi"].exists, "no message box")
+        XCTAssertFalse(pi.textViews["Message pi"].exists, "no message box")
     }
 
     /// Step 4, on the "iPhone", without sync (offline, as far as the session goes): it takes the session back first, then
@@ -3214,7 +3248,7 @@ final class TourTests: XCTestCase {
         XCTAssertTrue(row.waitForExistence(timeout: 45), "the session is the Mac's")
         row.tap()
         tap(pi.buttons["continueHere"])
-        XCTAssertTrue(pi.textFields["Message pi"].waitForExistence(timeout: 20), "the iPhone's again")
+        XCTAssertTrue(pi.textViews["Message pi"].waitForExistence(timeout: 20), "the iPhone's again")
         backToSessions()
         waitAllSynced("the iPhone has it, in iCloud")
         pi.terminate()
@@ -3234,7 +3268,7 @@ final class TourTests: XCTestCase {
         XCTAssertTrue(row.waitForExistence(timeout: 45), "the iPhone has it")
         row.tap()
         tap(pi.buttons["continueHere"])
-        XCTAssertTrue(pi.textFields["Message pi"].waitForExistence(timeout: 20), "the Mac's")
+        XCTAssertTrue(pi.textViews["Message pi"].waitForExistence(timeout: 20), "the Mac's")
         XCTAssertFalse(element(containing: "written offline").exists, "the iPhone's offline work isn't here")
         run("!echo written on the Mac > mac.txt")
         XCTAssertTrue(element(containing: "written on the Mac").waitForExistence(timeout: 15), "the command ran")
@@ -3255,7 +3289,7 @@ final class TourTests: XCTestCase {
         pause(1)
         XCTAssertTrue(element(containing: "written offline").waitForExistence(timeout: 10), "the offline work")
         XCTAssertFalse(element(containing: "written on the Mac").exists, "not the Mac's")
-        XCTAssertTrue(pi.textFields["Message pi"].exists, "the iPhone's")
+        XCTAssertTrue(pi.textViews["Message pi"].exists, "the iPhone's")
         backToSessions()
         element(containing: "On Mac").tap()
         pause(1)
