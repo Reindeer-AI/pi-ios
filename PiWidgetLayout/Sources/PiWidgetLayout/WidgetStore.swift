@@ -6,6 +6,7 @@ import Foundation
 ///     Widgets/content/<id>.json      an app's widget, as its extension drew it last (`WidgetContent`)
 ///     Widgets/images/<hash>.<ext>    the images its layouts show, as pi saved them
 ///     Widgets/views.json             the look each app's widgets show, when a button switched it (`show`)
+///     Widgets/next.json              the app a widget added from the gallery shows (`nextApp`)
 ///     Widgets/activities/<key>.json  a Live Activity's views, as its extension drew them last (`ActivityLayout`)
 ///
 /// pi writes them, except views.json, which the widget's buttons write. A build without the App Group (it needs its
@@ -92,6 +93,21 @@ public enum WidgetStore {
         views[id] = view
         try? FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
         try? JSONEncoder().encode(views).write(to: url, options: .atomic)
+    }
+
+    // MARK: The next widget
+
+    /// The app a widget added from the gallery shows: the newest (the last to draw its first widget), or the one the user
+    /// last opened Add to Home Screen for. (The gallery has one pi widget; another app is chosen with Edit Widget.)
+    public static func nextApp() -> String? {
+        guard let url = directory?.appending(path: "next.json"), let data = try? Data(contentsOf: url) else { return nil }
+        return (try? JSONDecoder().decode([String: String].self, from: data))?["app"]
+    }
+
+    public static func setNextApp(_ id: String) {
+        guard let directory else { return }
+        try? FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        try? JSONEncoder().encode(["app": id]).write(to: directory.appending(path: "next.json"), options: .atomic)
     }
 
     // MARK: Live Activities

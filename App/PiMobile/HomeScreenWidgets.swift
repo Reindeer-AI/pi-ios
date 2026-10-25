@@ -61,7 +61,10 @@ enum HomeScreenWidgets {
                 guard data.count <= contentLimit else {
                     throw AppError.message("The widget is too big (\(data.count / 1024) KB, at most \(contentLimit / 1024) KB): use fewer or smaller images")
                 }
+                let first = WidgetStore.content(for: id) == nil
                 try WidgetStore.setContent(data, for: id)
+                // A new app's widget is the one the gallery offers next.
+                if first { offerNext(id) }
                 WidgetStore.removeUnusedImages()
                 reload()
                 log("widget", "\(id) drawn (\(max(1, data.count / 1024)) KB)")
@@ -80,6 +83,13 @@ enum HomeScreenWidgets {
 
     static func reload() {
         WidgetCenter.shared.reloadTimelines(ofKind: WidgetLayout.kind)
+    }
+
+    /// The app the Home Screen's widget gallery offers next (it has one pi widget, which shows one app), and iOS asked
+    /// to look again: until it does, the gallery offers the app it showed before.
+    static func offerNext(_ id: String) {
+        WidgetStore.setNextApp(id)
+        WidgetCenter.shared.invalidateConfigurationRecommendations()
     }
 
     /// The app a panel shows, as the widget knows it (a session's own extension's app is that session's).
@@ -430,6 +440,12 @@ struct AddToHomeScreenSheet: View {
             }
         }
         .presentationDetents([.large])
+        // The widget the gallery offers next is this app's.
+        .onAppear {
+            guard let id = widgetApp?.id else { return }
+            HomeScreenWidgets.offerNext(id)
+            HomeScreenWidgets.reload()
+        }
     }
 
     private func preview(_ family: String, width: CGFloat, height: CGFloat, label: String) -> some View {

@@ -63,7 +63,8 @@ struct AppChoice: AppEntity {
     }
 }
 
-/// The apps pi saw its extensions register; a new widget shows the first app that drew a widget.
+/// The apps pi saw its extensions register; a new widget shows the newest app, or the one Add to Home Screen was opened
+/// for (`WidgetStore.nextApp`).
 struct AppChoiceQuery: EntityQuery {
     func entities(for identifiers: [String]) async throws -> [AppChoice] {
         WidgetStore.apps().filter { identifiers.contains($0.id) }.map(AppChoice.init)
@@ -74,9 +75,15 @@ struct AppChoiceQuery: EntityQuery {
     }
 
     func defaultResult() async -> AppChoice? {
-        Self.firstApp().map(AppChoice.init)
+        Self.nextApp().map(AppChoice.init)
     }
 
+    static func nextApp() -> WidgetApp? {
+        let apps = WidgetStore.apps()
+        return WidgetStore.nextApp().flatMap { next in apps.first { $0.id == next } } ?? firstApp()
+    }
+
+    /// What a widget with no app chosen shows: the first app that drew a widget (it stays put as apps come).
     static func firstApp() -> WidgetApp? {
         let drawn = Set(WidgetStore.contentIDs()), apps = WidgetStore.apps()
         return apps.first { drawn.contains($0.id) } ?? apps.first
