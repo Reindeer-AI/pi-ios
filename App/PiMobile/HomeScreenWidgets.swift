@@ -427,7 +427,7 @@ struct AddToHomeScreenSheet: View {
                         step(1, "Go to your Home Screen, and touch and hold an empty spot until the apps jiggle.")
                         step(2, "Tap Edit, then Add Widget.")
                         step(3, "Search for pi, choose pi app, pick a size, and tap Add Widget.")
-                        step(4, "If it shows another app: touch and hold the widget, tap Edit Widget, and choose \(title).")
+                        step(4, "Tap App, choose \(title), and tap outside the widget. (To change it later: touch and hold the widget, then Edit Widget.)")
                     }
                 }
                 .padding()

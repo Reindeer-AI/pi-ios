@@ -28,6 +28,8 @@ struct PiAppWidget: Widget {
                             .accessoryCircular, .accessoryRectangular, .accessoryInline])
         // The extension's layout decides its margins (`margins: false` reaches the edges).
         .contentMarginsDisabled()
+        // Adding it opens Edit Widget, to choose its app: the gallery offers one app, the one iOS last asked about.
+        .promptsForUserConfiguration()
     }
 }
 
