@@ -189,7 +189,7 @@ export function codingAgentModule(services: CodingAgentServices): Record<string,
 	module.BorderedLoader = BorderedLoader;
 
 	Object.assign(module, {
-		VERSION: "1.3.0",
+		VERSION: "1.4.0",
 		CONFIG_DIR_NAME: ".pi",
 		CURRENT_SESSION_VERSION: 3,
 		DEFAULT_COMPACTION_SETTINGS: { enabled: true, reserveTokens: 16384, keepRecentTokens: 20000 },

@@ -73,6 +73,7 @@ export const DefaultExtensionsDoc = defineDoc<{ extensions: Records }>({
 	history: "latest",
 	fork: "initial",
 	initial: () => ({ extensions: {} }),
+	checkpointWhen: () => false,
 });
 
 /** A session's own extensions, and the defaults it leaves out. */
@@ -83,6 +84,7 @@ export const SessionExtensionsDoc = defineDoc<{ extensions: Records; withoutDefa
 	history: "latest",
 	fork: "initial",
 	initial: () => ({ extensions: {}, withoutDefaults: [] }),
+	checkpointWhen: () => false,
 });
 
 /**

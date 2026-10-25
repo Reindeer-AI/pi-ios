@@ -24,6 +24,7 @@ export const ReplicaDoc = defineDoc<{ runs: Runs; extensions: JsonValue }>({
 	// A fork is a session of its own: it numbers its entries when it first syncs.
 	fork: "initial",
 	initial: () => ({ runs: [], extensions: null }),
+	checkpointWhen: () => false,
 });
 
 /** An entry as it travels between devices: its references by seq. */

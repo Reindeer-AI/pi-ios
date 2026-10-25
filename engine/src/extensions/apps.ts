@@ -105,6 +105,7 @@ export const SessionAppsDoc = defineDoc<AppsDoc>({
 	// A fork has the session's apps, as it has its workspace.
 	fork: "current",
 	initial: () => ({ apps: {}, states: {} }),
+	checkpointWhen: () => false,
 });
 
 /** Shared apps (in every session's dock) and their state, on the root conversation. */
@@ -115,6 +116,7 @@ export const SharedAppsDoc = defineDoc<AppsDoc>({
 	history: "latest",
 	fork: "initial",
 	initial: () => ({ apps: {}, states: {} }),
+	checkpointWhen: () => false,
 });
 
 export type AppsHost = { harness(): Harness; rootId(): ConversationId };

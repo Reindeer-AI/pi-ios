@@ -29,6 +29,7 @@ export const SessionsDoc = defineDoc<{ sessions: SessionMeta[] }>({
 	history: "latest",
 	fork: "initial",
 	initial: () => ({ sessions: [] }),
+	checkpointWhen: () => false,
 });
 
 // Register metadata with its conversation so retries cannot leave orphan sessions.

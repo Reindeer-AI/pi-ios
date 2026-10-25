@@ -46,6 +46,7 @@ export const CrabboxDoc = defineDoc<{ lease: Lease | null }>({
 	history: "latest",
 	fork: "initial",
 	initial: () => ({ lease: null }),
+	checkpointWhen: () => false,
 });
 
 type Status = { broker: string | null; signedIn: boolean; provider: string | null; identity: Record<string, unknown> | null };
