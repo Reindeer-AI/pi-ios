@@ -28,7 +28,7 @@ struct MCPServersView: View {
                 }
                 Button("Add server", systemImage: "plus") { adding = true }
             } footer: {
-                Text("Remote MCP servers (Streamable HTTP). Their tools are in every session; sign-ins and keys stay in this device's Keychain, and the agent never sees them.")
+                Text("Remote MCP servers (Streamable HTTP). Their tools are in every session. Each device signs in on its own; keys go to your other devices through iCloud Keychain. The agent never sees either.")
             }
         }
         .navigationTitle("MCP servers")

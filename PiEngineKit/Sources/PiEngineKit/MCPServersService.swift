@@ -1,9 +1,12 @@
 import Foundation
 
 /// MCP servers (Settings → MCP servers), for every session: each server's entry in pi's `mcpServers` shape (URL,
-/// exposure, enabled) in user defaults; header values (an API key, say) and the OAuth state pi-mcp keeps (client
-/// registration, tokens) in their own Keychain service. The engine connects the servers (`mcp.ts`); the agent sees their
-/// tools, never these secrets.
+/// exposure, enabled) in user defaults; header values (an API key, say) and an OAuth app's secret in their own Keychain
+/// service, synced; the OAuth state pi-mcp keeps (client registration, tokens) in one on this device only. The engine
+/// connects the servers (`mcp.ts`); the agent sees their tools, never these secrets.
+///
+/// Each device signs in on its own: a server that rotates refresh tokens takes the old one back once another device has
+/// refreshed, so devices sharing a sign-in signed each other out (the one refused cleared the tokens, for all of them).
 ///
 /// The engine's `mcp` service:
 /// - `servers` → `[{ name, url, enabled, exposure, description, headers, oauth }]`, `oauth` the app the user registered
@@ -15,6 +18,7 @@ import Foundation
 public final class MCPServersService {
     private let defaults: UserDefaults
     private let secrets = KeychainService(service: "dev.pimobile.mcp", synchronizable: true)
+    private let auth = KeychainService(service: "dev.pimobile.mcp.oauth")
 
     /// A server without its secrets.
     public struct Entry: Identifiable, Hashable, Sendable, Codable {
@@ -45,6 +49,18 @@ public final class MCPServersService {
 
     public init(defaults: UserDefaults = .standard) {
         self.defaults = defaults
+        keepSignInsHere()
+    }
+
+    /// Sign-ins synced before each device kept its own: this device keeps the one it had (unless it has its own), and
+    /// takes it out of iCloud, so the other devices sign in again.
+    private func keepSignInsHere() {
+        for account in (try? secrets.accounts()) ?? [] where account.hasSuffix("/oauth") && Self.isValidName(String(account.dropLast(6))) {
+            if (try? auth.get(account)) == nil {
+                guard let state = try? secrets.get(account), (try? auth.set(account, state)) != nil else { continue }
+            }
+            try? secrets.delete(account)
+        }
     }
 
     public var entries: [Entry] {
@@ -99,11 +115,11 @@ public final class MCPServersService {
 
     /// Forgets the server's sign-in (tokens and client registration).
     public func signOut(_ name: String) {
-        try? secrets.delete(authKey(name))
+        try? auth.delete(authKey(name))
     }
 
     public func isSignedIn(_ name: String) -> Bool {
-        guard let json = try? secrets.get(authKey(name)), let data = json.data(using: .utf8),
+        guard let json = try? auth.get(authKey(name)), let data = json.data(using: .utf8),
               let state = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else { return false }
         return state["tokens"] != nil
     }
@@ -155,14 +171,14 @@ public final class MCPServersService {
                     ]
                 }
             case "loadAuth":
-                guard let json = try self.secrets.get(self.authKey(arguments["server"]?.string ?? "")),
+                guard let json = try self.auth.get(self.authKey(arguments["server"]?.string ?? "")),
                       let data = json.data(using: .utf8) else { return nil }
                 return try JSONSerialization.jsonObject(with: data)
             case "saveAuth":
                 let server = arguments["server"]?.string ?? ""
                 let state = (params as? [String: Any])?["state"] ?? NSNull()
                 let data = try JSONSerialization.data(withJSONObject: state)
-                try self.secrets.set(self.authKey(server), String(decoding: data, as: UTF8.self))
+                try self.auth.set(self.authKey(server), String(decoding: data, as: UTF8.self))
                 return nil
             case "cacheTools":
                 self.toolCache[arguments["server"]?.string ?? ""] = (params as? [String: Any])?["tools"] ?? []
