@@ -2541,7 +2541,7 @@ private struct GitHubSection: View {
         } header: {
             Text("GitHub")
         } footer: {
-            Text("The agent uses your GitHub account through the GitHub API here, and with gh and git on Crabbox machines, where the app puts the token for your commands. The token stays in this device's Keychain; the agent never sees it.")
+            Text("The agent uses your GitHub account through the GitHub API here, and with gh and git on Crabbox machines, where the app puts the token for your commands. The token stays in this device's Keychain (each device signs in on its own); the agent never sees it.")
         }
         .onAppear(perform: refresh)
         .alert("GitHub token", isPresented: $enteringToken) {

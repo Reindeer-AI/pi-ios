@@ -42,7 +42,6 @@ final class SyncedSettings {
     static let syncedExtensionsKey = "syncedExtensions"
     static let keys: [String: Kind] = [
         "networkEndpoint": .value, "networkName": .value, "defaultModel": .value, "defaultThinkingLevel": .value,
-        "githubIdentity": .value, "githubTokenExpiry": .value,
         "crabboxBroker": .value, "crabboxIdentity": .value, "crabboxProvider": .value,
         "extensionSecrets": .dictionary, "vaultItems": .dictionary, "extensionData": .dictionary,
         "mcpServers": .jsonArray(id: "name"),

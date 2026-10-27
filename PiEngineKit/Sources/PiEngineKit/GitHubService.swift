@@ -5,6 +5,9 @@ import Foundation
 /// native, in its own Keychain service that the engine's `keychain` service cannot read: Crabbox installs it on a box
 /// over SSH, and API calls add it here, so neither extensions nor the agent ever see it.
 ///
+/// Each device signs in on its own, the token on this device only: a device login's token lasts eight hours and each
+/// refresh replaces the refresh token, so devices sharing one had their refreshes refused once another had refreshed.
+///
 /// The engine's `github` service:
 /// - `status` → `{ signedIn, login, name, scopes }`;
 /// - `request { method, path, body, accept }` → `{ status, body }`, a call to api.github.com (`path` starts with `/`);
@@ -16,7 +19,7 @@ import Foundation
 @MainActor
 public final class GitHubService {
     private let defaults: UserDefaults
-    private let secrets = KeychainService(service: "dev.pimobile.github", synchronizable: true)
+    private let secrets = KeychainService(service: "dev.pimobile.github.device")
 
     /// The OAuth app's client ID for the device login (`PIGitHubClientID` in Info.plist); without one, only a pasted
     /// token signs in.
@@ -25,14 +28,30 @@ public final class GitHubService {
     public init(defaults: UserDefaults = .standard, clientID: String? = Bundle.main.object(forInfoDictionaryKey: "PIGitHubClientID") as? String) {
         self.defaults = defaults
         self.clientID = clientID.flatMap { $0.isEmpty ? nil : $0 }
+        keepSignInHere()
+    }
+
+    /// A sign-in synced before each device kept its own: this device keeps the one it had (unless it has its own), and
+    /// takes it out of iCloud, so the other devices sign in again.
+    private func keepSignInHere() {
+        let iCloud = KeychainService(service: "dev.pimobile.github", synchronizable: true)
+        guard let synced = try? iCloud.get("token") else { return }
+        if token == nil {
+            guard (try? secrets.set("token", synced)) != nil else { return }
+            if let refresh = try? iCloud.get("refresh") { try? secrets.set("refresh", refresh) }
+        }
+        try? iCloud.delete("token")
+        try? iCloud.delete("refresh")
     }
 
     // MARK: - Account
 
     public var signedIn: Bool { token != nil }
-    /// Who GitHub says the token belongs to, from the last check: `login`, `name`, `scopes`.
+    /// Who GitHub says the token belongs to, from the last check: `login`, `name`, `scopes`; nil without a token (one
+    /// another device took out of iCloud, say).
     public var identity: [String: Any]? {
-        defaults.data(forKey: "githubIdentity").flatMap { try? JSONSerialization.jsonObject(with: $0) as? [String: Any] }
+        guard signedIn else { return nil }
+        return defaults.data(forKey: "githubIdentity").flatMap { try? JSONSerialization.jsonObject(with: $0) as? [String: Any] }
     }
 
     /// The stored token as it is; `currentToken()` refreshes one that expires.

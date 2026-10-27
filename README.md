@@ -39,8 +39,8 @@ their apps, and on-device models, with any model provider you sign in to.
 pi tries to stay minimal and leave everything else to extensions, but two integrations are built in. Without them the
 agent could only build things for itself (its own extensions), not code anything else.
 
-- **GitHub.** Sign in once at Settings → GitHub (GitHub's device login). The token stays in the Keychain, and on your
-  other devices through iCloud Keychain; the agent never sees it. The agent calls GitHub's REST API as you
+- **GitHub.** Sign in at Settings → GitHub (GitHub's device login) on each device. The token stays in that device's
+  Keychain; the agent never sees it. The agent calls GitHub's REST API as you
   (`github_api`: repositories, issues, pull requests, reviews, workflow runs), installs extensions from private
   repositories, and on a Crabbox box `gh` and git over HTTPS work as you.
 - **Crabbox.** A [Crabbox](https://github.com/openclaw/crabbox) broker leases real Linux machines. With one set up
