@@ -286,7 +286,11 @@ private struct OAuthWebView: UIViewRepresentable {
     func makeCoordinator() -> Coordinator { Coordinator(redirect: redirect, respond: respond) }
 
     func makeUIView(context: Context) -> WKWebView {
-        let view = WKWebView(frame: .zero, configuration: WKWebViewConfiguration())
+        let configuration = WKWebViewConfiguration()
+        // Named as pi's browser is (with Safari's token): on an iPad or a Mac a web view says it's a Mac browser, and
+        // without the token Slack takes it for one it doesn't support and its sign-in page stays blank.
+        configuration.applicationNameForUserAgent = BrowserService.userAgentSuffix
+        let view = WKWebView(frame: .zero, configuration: configuration)
         view.navigationDelegate = context.coordinator
         view.load(URLRequest(url: url))
         return view
