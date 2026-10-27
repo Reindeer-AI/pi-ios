@@ -45,12 +45,8 @@ struct MessageEditor: UIViewRepresentable {
         guard let width = proposal.width else { return nil }
         let line = view.font?.lineHeight ?? 22
         let fits = view.sizeThatFits(CGSize(width: width.isFinite ? width : .greatestFiniteMagnitude, height: .greatestFiniteMagnitude)).height
-        let most = ceil(line * Self.lines)
-        // Past six lines it scrolls (until then it's as tall as its text, and scrolling would only jiggle it).
-        if view.isScrollEnabled != (fits > most) {
-            DispatchQueue.main.async { view.isScrollEnabled = fits > most }
-        }
-        return CGSize(width: width, height: min(max(fits, ceil(line)), most))
+        // Past six lines it scrolls (`EditorView.layoutSubviews`).
+        return CGSize(width: width, height: min(max(fits, ceil(line)), ceil(line * Self.lines)))
     }
 
     func makeCoordinator() -> Coordinator { Coordinator(self) }
@@ -87,6 +83,19 @@ struct MessageEditor: UIViewRepresentable {
         }
 
         @objc private func sendMessage() { send() }
+
+        /// It scrolls only when its text is taller than it (past six lines; until then it's as tall as its text, and
+        /// scrolling would only jiggle it), decided at the size it got: SwiftUI's layout also asks `sizeThatFits` about
+        /// widths it doesn't give it, and scrolling turned off for one of those put the text back at its top while the
+        /// user typed at its end.
+        override func layoutSubviews() {
+            super.layoutSubviews()
+            guard bounds.width > 0 else { return }
+            let overflows = sizeThatFits(CGSize(width: bounds.width, height: .greatestFiniteMagnitude)).height > bounds.height + 1
+            guard overflows != isScrollEnabled else { return }
+            isScrollEnabled = overflows
+            if overflows { scrollRangeToVisible(selectedRange) }
+        }
 
         @objc private func insertNewLine() { insertText("\n") }
 
